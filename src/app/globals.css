@@ -320,7 +320,7 @@ body {
 
 .top-bar {
   display: grid;
-  grid-template-columns: 170px 58px minmax(260px, 640px) auto 1fr;
+  grid-template-columns: 170px 58px minmax(260px, 640px) auto auto minmax(180px, 1fr);
   gap: 12px;
   align-items: center;
   padding: 10px 18px;
@@ -400,6 +400,7 @@ body {
   color: var(--muted);
 }
 
+.install-top-button,
 .upload-top-button,
 .ghost-button {
   display: inline-flex;
@@ -417,6 +418,11 @@ body {
   white-space: nowrap;
 }
 
+.install-top-button {
+  background: #1f1f1f;
+  color: #fff;
+}
+
 .ghost-button {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.08);
@@ -424,7 +430,10 @@ body {
 }
 
 .top-actions {
+  position: relative;
+  grid-column: 6;
   display: flex;
+  justify-self: end;
   justify-content: flex-end;
   align-items: center;
   gap: 8px;
@@ -448,6 +457,97 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.avatar-button.active {
+  outline: 2px solid var(--green);
+}
+
+.avatar-button.large {
+  width: 58px;
+  height: 58px;
+  border-width: 6px;
+}
+
+.profile-popover {
+  position: absolute;
+  top: 58px;
+  right: 0;
+  z-index: 26;
+  display: grid;
+  gap: 10px;
+  width: min(340px, calc(100vw - 28px));
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #1f1f1f;
+  box-shadow: var(--shadow);
+  padding: 14px;
+}
+
+.profile-popover::before {
+  position: absolute;
+  top: -8px;
+  right: 38px;
+  width: 16px;
+  height: 16px;
+  background: #1f1f1f;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  content: "";
+  transform: rotate(45deg);
+}
+
+.profile-summary {
+  display: grid;
+  grid-template-columns: 58px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.profile-summary strong,
+.profile-summary small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-summary small,
+.profile-stats small {
+  color: var(--muted);
+}
+
+.profile-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0;
+}
+
+.profile-stats span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.profile-popover > button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 42px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  padding: 0 10px;
+  text-align: left;
+}
+
+.profile-popover > button:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .content-grid {
@@ -1067,6 +1167,29 @@ body {
   margin-bottom: 12px;
 }
 
+.queue-drawer-content {
+  display: grid;
+  gap: 22px;
+}
+
+.queue-current {
+  display: grid;
+  gap: 8px;
+}
+
+.queue-current > span {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 800;
+}
+
+.queue-drawer-list {
+  display: grid;
+  gap: 4px;
+  max-height: 360px;
+  overflow: auto;
+}
+
 .queue-item {
   grid-template-columns: 48px minmax(0, 1fr);
   min-height: 56px;
@@ -1268,6 +1391,28 @@ input[type="range"]:hover {
   padding: 14px 18px;
 }
 
+.utility-panel {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  min-height: 180px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted);
+  padding: 26px;
+  text-align: center;
+}
+
+.utility-panel h3 {
+  margin: 0;
+  color: #fff;
+}
+
+.utility-panel p {
+  margin: 0;
+  line-height: 1.5;
+}
+
 @media (max-width: 1320px) {
   .content-grid {
     grid-template-columns: minmax(240px, 330px) minmax(0, 1fr);
@@ -1307,19 +1452,31 @@ input[type="range"]:hover {
   }
 
   .top-bar {
-    grid-template-columns: 48px 1fr;
+    grid-template-columns: 1fr;
     gap: 10px;
     padding: 12px;
   }
 
   .window-dots,
-  .home-button,
-  .top-actions {
+  .home-button {
     display: none;
   }
 
+  .search-box,
+  .install-top-button,
   .upload-top-button {
     grid-column: 1 / -1;
+  }
+
+  .top-actions {
+    grid-column: 1 / -1;
+    justify-content: space-between;
+    justify-self: stretch;
+  }
+
+  .profile-popover {
+    top: 52px;
+    right: 0;
   }
 
   .content-grid {

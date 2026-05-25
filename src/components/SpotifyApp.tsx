@@ -46,6 +46,10 @@ import type { AppUser, Playlist, Track } from "@/types";
 
 type ViewState = "home" | "liked" | `playlist:${string}`;
 type RepeatMode = "off" | "all" | "one";
+type BeforeInstallPromptEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
+};
 
 const gradients = [
   "linear-gradient(135deg, #6f45ff 0%, #c2f6df 100%)",
@@ -163,6 +167,14 @@ export function SpotifyApp() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [playlistOpen, setPlaylistOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [queueOpen, setQueueOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(false);
+  const [friendsOpen, setFriendsOpen] = useState(false);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const [isInstalled, setIsInstalled] = useState(
+    () => typeof window !== "undefined" && window.matchMedia?.("(display-mode: standalone)").matches
+  );
   const [toast, setToast] = useState("");
   const [uploadForm, setUploadForm] = useState({
     title: "",
@@ -198,6 +210,31 @@ export function SpotifyApp() {
       const data = await playlistResult.json();
       setPlaylists(data.playlists || []);
     }
+  }, []);
+
+  useEffect(() => {
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    }
+
+    const handleBeforeInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+      setIsInstalled(false);
+    };
+
+    const handleInstalled = () => {
+      setInstallPrompt(null);
+      setIsInstalled(true);
+    };
+
+    window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+    window.addEventListener("appinstalled", handleInstalled);
+
+    return () => {
+      window.removeEventListener("beforeinstallprompt", handleBeforeInstallPrompt);
+      window.removeEventListener("appinstalled", handleInstalled);
+    };
   }, []);
 
   useEffect(() => {
@@ -422,6 +459,92 @@ export function SpotifyApp() {
     playNext();
   }, [playNext, repeatMode]);
 
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) {
+      return;
+    }
+
+    if (!currentTrack) {
+      navigator.mediaSession.metadata = null;
+      return;
+    }
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: currentTrack.title,
+      artist: currentTrack.artist,
+      album: currentTrack.album,
+      artwork: [
+        {
+          src: currentTrack.coverUrl || "/icon.svg",
+          sizes: currentTrack.coverUrl ? "512x512" : "any",
+          type: currentTrack.coverUrl ? "image/jpeg" : "image/svg+xml"
+        }
+      ]
+    });
+
+    const seekBy = (seconds: number) => {
+      const audio = audioRef.current;
+
+      if (!audio) {
+        return;
+      }
+
+      audio.currentTime = Math.max(0, Math.min(audio.duration || totalDuration || 0, audio.currentTime + seconds));
+      setCurrentTime(audio.currentTime);
+    };
+
+    navigator.mediaSession.setActionHandler("play", () => setIsPlaying(true));
+    navigator.mediaSession.setActionHandler("pause", () => setIsPlaying(false));
+    navigator.mediaSession.setActionHandler("previoustrack", playPrevious);
+    navigator.mediaSession.setActionHandler("nexttrack", playNext);
+    navigator.mediaSession.setActionHandler("seekbackward", () => seekBy(-10));
+    navigator.mediaSession.setActionHandler("seekforward", () => seekBy(10));
+    navigator.mediaSession.setActionHandler("seekto", (details) => {
+      const audio = audioRef.current;
+
+      if (!audio || typeof details.seekTime !== "number") {
+        return;
+      }
+
+      audio.currentTime = details.seekTime;
+      setCurrentTime(details.seekTime);
+    });
+
+    return () => {
+      const actions: MediaSessionAction[] = [
+        "play",
+        "pause",
+        "previoustrack",
+        "nexttrack",
+        "seekbackward",
+        "seekforward",
+        "seekto"
+      ];
+
+      actions.forEach((action) => navigator.mediaSession.setActionHandler(action, null));
+    };
+  }, [currentTrack, playNext, playPrevious, totalDuration]);
+
+  useEffect(() => {
+    if (!("mediaSession" in navigator)) {
+      return;
+    }
+
+    navigator.mediaSession.playbackState = currentTrack ? (isPlaying ? "playing" : "paused") : "none";
+
+    if (currentTrack && totalDuration > 0 && "setPositionState" in navigator.mediaSession) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: totalDuration,
+          playbackRate: 1,
+          position: Math.min(currentTime, totalDuration)
+        });
+      } catch {
+        // Some Android browsers are picky about duration/position values.
+      }
+    }
+  }, [currentTime, currentTrack, isPlaying, totalDuration]);
+
   const toggleLike = useCallback(
     async (track: Track) => {
       const nextLiked = !track.liked;
@@ -446,6 +569,7 @@ export function SpotifyApp() {
   const addToQueue = useCallback(
     (track: Track) => {
       setManualQueue((existing) => [...existing, track]);
+      setQueueOpen(true);
       showToast(`Added "${track.title}" to queue.`);
     },
     [showToast]
@@ -516,6 +640,31 @@ export function SpotifyApp() {
     setTracks([]);
     setPlaylists([]);
     setView("home");
+    setProfileOpen(false);
+    setQueueOpen(false);
+  }
+
+  async function handleInstallApp() {
+    if (isInstalled) {
+      showToast("The app is already installed.");
+      return;
+    }
+
+    if (!installPrompt) {
+      showToast("On Android Chrome, open the browser menu and tap Add to Home screen.");
+      return;
+    }
+
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    setInstallPrompt(null);
+
+    if (choice.outcome === "accepted") {
+      setIsInstalled(true);
+      showToast("Spotify Clone installed.");
+    } else {
+      showToast("Install dismissed.");
+    }
   }
 
   async function handleCreatePlaylist(event: FormEvent<HTMLFormElement>) {
@@ -681,6 +830,8 @@ export function SpotifyApp() {
         onEnded={handleEnded}
         onLoadedMetadata={(event) => setLoadedDuration(event.currentTarget.duration || currentTrack?.duration || 0)}
         onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
+        playsInline
+        preload="metadata"
         ref={audioRef}
         src={currentTrack?.audioUrl}
       />
@@ -709,19 +860,45 @@ export function SpotifyApp() {
           />
         </label>
 
+        {!isInstalled && (
+          <button className="install-top-button" onClick={handleInstallApp} type="button">
+            <Download size={18} />
+            Install app
+          </button>
+        )}
+
         <button className="upload-top-button" onClick={() => setUploadOpen(true)} type="button">
           <Upload size={18} />
           Add songs
         </button>
 
         <div className="top-actions">
-          <IconButton label="Notifications">
+          <IconButton
+            label="Notifications"
+            onClick={() => {
+              setActivityOpen(true);
+              setProfileOpen(false);
+            }}
+          >
             <Bell size={20} />
           </IconButton>
-          <IconButton label="Friends">
+          <IconButton
+            label="Friends"
+            onClick={() => {
+              setFriendsOpen(true);
+              setProfileOpen(false);
+            }}
+          >
             <UserRound size={20} />
           </IconButton>
-          <button className="avatar-button" title={user.email} type="button">
+          <button
+            aria-expanded={profileOpen}
+            aria-haspopup="menu"
+            className={`avatar-button ${profileOpen ? "active" : ""}`}
+            onClick={() => setProfileOpen((open) => !open)}
+            title={user.email}
+            type="button"
+          >
             {user.picture ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img alt="" src={user.picture} />
@@ -729,6 +906,54 @@ export function SpotifyApp() {
               user.name.slice(0, 1).toUpperCase()
             )}
           </button>
+          {profileOpen && (
+            <div className="profile-popover" role="menu">
+              <div className="profile-summary">
+                <button className="avatar-button large" title={user.email} type="button">
+                  {user.picture ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img alt="" src={user.picture} />
+                  ) : (
+                    user.name.slice(0, 1).toUpperCase()
+                  )}
+                </button>
+                <span>
+                  <strong>{user.name}</strong>
+                  <small>{user.email}</small>
+                </span>
+              </div>
+              <div className="profile-stats">
+                <span>
+                  <strong>{tracks.length}</strong>
+                  <small>Songs</small>
+                </span>
+                <span>
+                  <strong>{playlists.length}</strong>
+                  <small>Playlists</small>
+                </span>
+                <span>
+                  <strong>{likedTracks.length}</strong>
+                  <small>Liked</small>
+                </span>
+              </div>
+              <button onClick={handleInstallApp} role="menuitem" type="button">
+                <Download size={18} />
+                Install Android app
+              </button>
+              <button onClick={() => setUploadOpen(true)} role="menuitem" type="button">
+                <Upload size={18} />
+                Upload song
+              </button>
+              <button onClick={() => setPlaylistOpen(true)} role="menuitem" type="button">
+                <Plus size={18} />
+                Create playlist
+              </button>
+              <button onClick={handleLogout} role="menuitem" type="button">
+                <LogOut size={18} />
+                Log out
+              </button>
+            </div>
+          )}
           <IconButton label="Log out" onClick={handleLogout}>
             <LogOut size={19} />
           </IconButton>
@@ -1028,6 +1253,9 @@ export function SpotifyApp() {
             <IconButton active={repeatMode !== "off"} label="Repeat" onClick={cycleRepeat}>
               {repeatMode === "one" ? <Repeat1 size={20} /> : <Repeat size={20} />}
             </IconButton>
+            <IconButton active={queueOpen || nextQueueTracks.length > 0} label="Queue" onClick={() => setQueueOpen(true)}>
+              <ListMusic size={20} />
+            </IconButton>
           </div>
 
           <div className="progress-line">
@@ -1053,10 +1281,10 @@ export function SpotifyApp() {
         </div>
 
         <div className="player-tools">
-          <IconButton label="Queue">
+          <IconButton active={queueOpen || nextQueueTracks.length > 0} label="Queue" onClick={() => setQueueOpen(true)}>
             <ListMusic size={20} />
           </IconButton>
-          <IconButton label="Lyrics">
+          <IconButton label="Lyrics" onClick={() => showToast("Lyrics view is coming next.")}>
             <Mic2 size={19} />
           </IconButton>
           <Volume2 size={20} />
@@ -1159,6 +1387,40 @@ export function SpotifyApp() {
               Create playlist
             </button>
           </form>
+        </Modal>
+      )}
+
+      {queueOpen && (
+        <Modal title="Queue" onClose={() => setQueueOpen(false)}>
+          <QueueList
+            currentTrack={currentTrack}
+            onClear={() => setManualQueue([])}
+            onPlay={(track) => {
+              playTrack(track, tracks);
+              setQueueOpen(false);
+            }}
+            tracks={nextQueueTracks}
+          />
+        </Modal>
+      )}
+
+      {activityOpen && (
+        <Modal title="Notifications" onClose={() => setActivityOpen(false)}>
+          <div className="utility-panel">
+            <Bell size={32} />
+            <h3>No new notifications</h3>
+            <p>Uploads, playlist changes, and account activity will appear here.</p>
+          </div>
+        </Modal>
+      )}
+
+      {friendsOpen && (
+        <Modal title="Friends" onClose={() => setFriendsOpen(false)}>
+          <div className="utility-panel">
+            <UserRound size={32} />
+            <h3>Friend activity is ready for accounts</h3>
+            <p>Connect a social backend later to show what friends are playing.</p>
+          </div>
         </Modal>
       )}
 
@@ -1316,6 +1578,57 @@ function TrackTable({
           </span>
         </div>
       ))}
+    </div>
+  );
+}
+
+type QueueListProps = {
+  currentTrack: Track | null;
+  onClear: () => void;
+  onPlay: (track: Track) => void;
+  tracks: Track[];
+};
+
+function QueueList({ currentTrack, onClear, onPlay, tracks }: QueueListProps) {
+  return (
+    <div className="queue-drawer-content">
+      {currentTrack ? (
+        <section className="queue-current">
+          <span>Now playing</span>
+          <button className="queue-item" onClick={() => onPlay(currentTrack)} type="button">
+            <Artwork track={currentTrack} size="sm" />
+            <span>
+              <strong>{currentTrack.title}</strong>
+              <small>{currentTrack.artist}</small>
+            </span>
+          </button>
+        </section>
+      ) : null}
+
+      <section>
+        <div className="credits-title">
+          <h3>Next up</h3>
+          <button disabled={!tracks.length} onClick={onClear} type="button">
+            Clear
+          </button>
+        </div>
+
+        {tracks.length ? (
+          <div className="queue-drawer-list">
+            {tracks.map((track) => (
+              <button className="queue-item" key={`${track.id}-drawer`} onClick={() => onPlay(track)} type="button">
+                <Artwork track={track} size="sm" />
+                <span>
+                  <strong>{track.title}</strong>
+                  <small>{track.artist}</small>
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <p className="queue-empty">Queue is empty. Add tracks with the list button beside any song.</p>
+        )}
+      </section>
     </div>
   );
 }
