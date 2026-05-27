@@ -1,18 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
 
+const productionFrontendUrl = "https://spotify-ggx2.onrender.com";
+
+function configuredOrigins() {
+  return new Set(
+    [productionFrontendUrl, process.env.FRONTEND_URL]
+      .flatMap((value) => (value || "").split(","))
+      .map((value) => value.trim().replace(/\/$/, ""))
+      .filter(Boolean)
+  );
+}
+
 function allowedOrigin(request: NextRequest) {
   const origin = request.headers.get("origin");
-  const configured = process.env.FRONTEND_URL;
+  const origins = configuredOrigins();
 
   if (!origin) {
-    return configured || "";
+    return origins.values().next().value || "";
   }
 
-  if (!configured) {
-    return origin;
-  }
-
-  return origin === configured ? origin : "";
+  return origins.has(origin.replace(/\/$/, "")) ? origin : "";
 }
 
 export function middleware(request: NextRequest) {

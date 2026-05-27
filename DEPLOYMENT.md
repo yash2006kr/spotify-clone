@@ -25,7 +25,7 @@ FRONTEND_URL="https://your-frontend.example"
 Frontend variables:
 
 ```bash
-NEXT_PUBLIC_API_URL="https://spotify-clone-backend-6jgx.onrender.com"
+NEXT_PUBLIC_API_URL="https://spotify-clone-rt8l.onrender.com"
 NEXT_PUBLIC_GOOGLE_CLIENT_ID="your-google-oauth-client-id"
 ```
 
@@ -49,19 +49,19 @@ npm start
 Use these settings if configuring the existing Render Static Site manually:
 
 ```bash
-Root directory: leave blank
-Build command: npm install && npm run build --workspace frontend
-Publish directory: frontend/out
+Root directory: frontend
+Build command: npm install && npm run build
+Publish directory: out
 ```
 
-Do not run `npm start` for the frontend Static Site. Static site builds must finish and publish the generated files in `frontend/out`.
+Do not run `npm start` for the frontend Static Site. Static site builds must finish and publish the generated files in `out` inside the `frontend` root directory.
 
 The repository also includes `render.yaml` with the same frontend settings for Render Blueprints.
 
 In the backend Render service, set `FRONTEND_URL` to the final frontend URL, for example:
 
 ```bash
-FRONTEND_URL="https://spotify-clone-frontend-pnzb.onrender.com"
+FRONTEND_URL="https://spotify-ggx2.onrender.com"
 ```
 
 Use Node.js 20 or newer. Add both deployed origins to your Google OAuth web client: the frontend origin for the button and the backend origin if your Google console requires it.

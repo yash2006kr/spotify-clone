@@ -75,9 +75,8 @@ body {
   width: 92px;
   height: 92px;
   place-items: center;
-  overflow: hidden;
   border-radius: 50%;
-  background: #000;
+  background: var(--green);
   color: #021008;
   box-shadow: 0 24px 80px rgba(30, 215, 96, 0.34);
 }

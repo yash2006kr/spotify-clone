@@ -1,5 +1,7 @@
 import { Db, GridFSBucket, MongoClient } from "mongodb";
 
+import "@/lib/env";
+
 declare global {
   var __spotifyMongoClientPromise: Promise<MongoClient> | undefined;
 }
@@ -10,7 +12,7 @@ function getMongoUri() {
   const uri = process.env.MONGODB_URI;
 
   if (!uri) {
-    throw new Error("MONGODB_URI is missing. Add it to .env.local.");
+    throw new Error("MONGODB_URI is missing. Add it to the root .env.local or hosting env.");
   }
 
   return uri;

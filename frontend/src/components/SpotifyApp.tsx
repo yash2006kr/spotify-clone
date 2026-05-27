@@ -259,6 +259,10 @@ function SpotifyLogo({ className = "" }: { className?: string }) {
   return <img alt="" className={`spotify-logo ${className}`} src={spotifyLogoSrc} />;
 }
 
+function SplashLogo() {
+  return <Music2 size={42} />;
+}
+
 type PlaylistArtworkProps = {
   add?: boolean;
   hero?: boolean;
@@ -1412,7 +1416,7 @@ export function SpotifyApp() {
     return (
       <main className="splash-screen">
         <div className="splash-mark">
-          <SpotifyLogo />
+          <SplashLogo />
         </div>
         <Loader2 className="spin" size={28} />
       </main>

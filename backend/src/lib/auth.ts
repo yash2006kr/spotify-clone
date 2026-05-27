@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import { ObjectId } from "mongodb";
 import { cookies } from "next/headers";
 
+import "@/lib/env";
 import { ensureIndexes, getDb } from "@/lib/mongodb";
 
 export const sessionCookieName = "spotify_clone_session";
@@ -28,7 +29,7 @@ function jwtSecret() {
   const secret = process.env.JWT_SECRET;
 
   if (!secret) {
-    throw new Error("JWT_SECRET is missing. Add it to .env.local.");
+    throw new Error("JWT_SECRET is missing. Add it to the root .env.local or hosting env.");
   }
 
   return secret;
