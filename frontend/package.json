@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "next dev --webpack",
     "build": "next build",
-    "start": "next start",
+    "start": "npm run build",
+    "preview": "npx serve@latest out",
     "lint": "eslint"
   },
   "dependencies": {

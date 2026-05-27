@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: spotify-clone-frontend
+    runtime: static
+    buildCommand: npm install && npm run build --workspace frontend
+    staticPublishPath: frontend/out
+    envVars:
+      - key: NEXT_PUBLIC_API_URL
+        value: https://spotify-clone-backend-6jgx.onrender.com
+      - key: NEXT_PUBLIC_GOOGLE_CLIENT_ID
+        sync: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html

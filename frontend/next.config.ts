@@ -6,13 +6,9 @@ import type { NextConfig } from "next";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
 const nextConfig: NextConfig = {
+  output: "export",
   turbopack: {
     root
-  },
-  experimental: {
-    serverActions: {
-      bodySizeLimit: "100mb"
-    }
   }
 };
 
