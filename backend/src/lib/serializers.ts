@@ -35,6 +35,7 @@ export function trackToClient(track: AnyDocument, liked = false): Track {
     duration: Number(track.duration || 0),
     plays: Number(track.plays || 0),
     liked,
+    uploadedById: track.uploadedBy?.toString?.() || "",
     uploadedByName: track.uploadedByName || "Unknown",
     createdAt: dateString(track.createdAt),
     audioUrl: `/api/tracks/${id}/stream`,

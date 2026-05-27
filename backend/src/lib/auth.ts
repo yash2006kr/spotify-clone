@@ -54,7 +54,7 @@ export async function setSession(user: UserDocument) {
   );
 
   const cookieStore = await cookies();
-  const crossSite = Boolean(process.env.FRONTEND_URL && process.env.NODE_ENV === "production");
+  const crossSite = process.env.NODE_ENV === "production";
 
   cookieStore.set(sessionCookieName, token, {
     httpOnly: true,
@@ -67,7 +67,7 @@ export async function setSession(user: UserDocument) {
 
 export async function clearSession() {
   const cookieStore = await cookies();
-  const crossSite = Boolean(process.env.FRONTEND_URL && process.env.NODE_ENV === "production");
+  const crossSite = process.env.NODE_ENV === "production";
 
   cookieStore.set(sessionCookieName, "", {
     httpOnly: true,

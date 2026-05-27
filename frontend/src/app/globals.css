@@ -320,7 +320,7 @@ body {
 
 .top-bar {
   display: grid;
-  grid-template-columns: 170px 58px minmax(260px, 640px) auto auto minmax(180px, 1fr);
+  grid-template-columns: 170px 58px 46px minmax(240px, 640px) auto minmax(180px, 1fr);
   gap: 12px;
   align-items: center;
   padding: 10px 18px;
@@ -358,6 +358,7 @@ body {
 }
 
 .home-button {
+  grid-column: 2;
   width: 58px;
   height: 58px;
   background: #1f1f1f;
@@ -369,7 +370,16 @@ body {
   color: #111;
 }
 
+.install-icon-button {
+  grid-column: 3;
+  width: 46px;
+  height: 46px;
+  background: #1f1f1f;
+  color: #fff;
+}
+
 .search-box {
+  grid-column: 4;
   display: grid;
   grid-template-columns: 28px 1fr;
   gap: 12px;
@@ -400,7 +410,6 @@ body {
   color: var(--muted);
 }
 
-.install-top-button,
 .upload-top-button,
 .ghost-button {
   display: inline-flex;
@@ -418,9 +427,8 @@ body {
   white-space: nowrap;
 }
 
-.install-top-button {
-  background: #1f1f1f;
-  color: #fff;
+.upload-top-button {
+  grid-column: 5;
 }
 
 .ghost-button {
@@ -552,10 +560,14 @@ body {
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 420px) minmax(0, 1fr) minmax(300px, 470px);
+  grid-template-columns: minmax(260px, 420px) minmax(0, 1fr) minmax(280px, 430px);
   gap: 10px;
   min-height: 0;
   padding: 0 10px;
+}
+
+.content-grid.details-closed {
+  grid-template-columns: minmax(260px, 420px) minmax(0, 1fr);
 }
 
 .panel {
@@ -738,7 +750,8 @@ body {
 }
 
 .main-panel {
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding-bottom: 36px;
 }
 
@@ -758,7 +771,7 @@ body {
 
 .quick-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
 }
 
@@ -818,7 +831,7 @@ body {
 
 .card-row {
   display: grid;
-  grid-template-columns: repeat(5, minmax(140px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
   gap: 18px;
 }
 
@@ -903,13 +916,13 @@ body {
 }
 
 .collection-view {
-  padding: 40px 54px;
+  padding: 36px clamp(20px, 4vw, 54px);
 }
 
 .collection-header {
   display: grid;
-  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
-  gap: 28px;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  gap: clamp(18px, 3vw, 28px);
   align-items: end;
   margin-bottom: 36px;
 }
@@ -923,10 +936,11 @@ body {
 }
 
 .collection-header h1 {
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+  word-break: normal;
   margin: 0;
-  font-size: clamp(2.8rem, 8vw, 5.8rem);
-  line-height: 0.95;
+  font-size: clamp(2.4rem, 5vw, 5rem);
+  line-height: 1;
 }
 
 .collection-header p {
@@ -957,6 +971,17 @@ body {
   height: 58px;
 }
 
+.collection-shuffle {
+  width: 50px;
+  height: 50px;
+  background: #222;
+  color: #fff;
+}
+
+.collection-shuffle.active {
+  background: rgba(30, 215, 96, 0.14);
+}
+
 .track-table {
   display: grid;
   gap: 2px;
@@ -965,8 +990,8 @@ body {
 .track-table-head,
 .track-row {
   display: grid;
-  grid-template-columns: 42px minmax(220px, 1.6fr) minmax(120px, 1fr) minmax(90px, 0.7fr) minmax(280px, 1.2fr);
-  gap: 14px;
+  grid-template-columns: 36px minmax(180px, 1.6fr) minmax(100px, 0.9fr) minmax(86px, 0.7fr) minmax(220px, 1fr);
+  gap: 10px;
   align-items: center;
   min-height: 56px;
   padding: 0 12px;
@@ -1044,6 +1069,7 @@ body {
 
 .track-row-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
   gap: 4px;
@@ -1077,6 +1103,42 @@ body {
   font-size: 1.1rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.now-menu-wrap {
+  position: relative;
+}
+
+.now-menu {
+  position: absolute;
+  top: 44px;
+  right: 0;
+  z-index: 5;
+  min-width: 132px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #282828;
+  box-shadow: var(--shadow);
+  padding: 6px;
+}
+
+.now-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 800;
+  padding: 0 10px;
+}
+
+.now-menu button:hover {
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .now-title-line {
@@ -1263,12 +1325,15 @@ input[type="range"]:hover {
 }
 
 .player-tools {
-  display: grid;
-  grid-template-columns: 38px 38px 24px minmax(80px, 128px);
+  display: flex;
   gap: 8px;
   align-items: center;
   justify-content: end;
   color: var(--muted);
+}
+
+.player-tools input {
+  width: min(128px, 10vw);
 }
 
 .modal-backdrop {
@@ -1447,25 +1512,43 @@ input[type="range"]:hover {
 
   .spotify-shell {
     grid-template-rows: auto auto auto;
-    min-height: 100vh;
+    min-height: 100dvh;
     overflow: auto;
   }
 
   .top-bar {
-    grid-template-columns: 1fr;
-    gap: 10px;
-    padding: 12px;
+    grid-template-columns: 54px 46px minmax(0, 1fr);
+    gap: 8px;
+    padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 12px;
   }
 
-  .window-dots,
-  .home-button {
+  .window-dots {
     display: none;
   }
 
-  .search-box,
-  .install-top-button,
+  .home-button {
+    grid-column: 1;
+    display: grid;
+    width: 54px;
+    height: 50px;
+  }
+
+  .install-icon-button {
+    grid-column: 2;
+    width: 46px;
+    height: 46px;
+  }
+
+  .search-box {
+    grid-column: 3;
+    height: 50px;
+    min-width: 0;
+    padding: 0 14px;
+  }
+
   .upload-top-button {
     grid-column: 1 / -1;
+    min-height: 48px;
   }
 
   .top-actions {
@@ -1480,12 +1563,16 @@ input[type="range"]:hover {
   }
 
   .content-grid {
-    grid-template-columns: 1fr;
-    padding: 0 10px 110px;
+    grid-template-columns: minmax(0, 1fr);
+    padding: 0 10px 178px;
+  }
+
+  .content-grid.details-closed {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .library-panel {
-    max-height: 330px;
+    max-height: min(360px, 52vh);
   }
 
   .hero-band,
@@ -1527,7 +1614,7 @@ input[type="range"]:hover {
     z-index: 20;
     grid-template-columns: 1fr;
     gap: 8px;
-    padding: 10px 14px;
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
   }
 
   .player-tools {
@@ -1542,10 +1629,6 @@ input[type="range"]:hover {
 
   .auth-card h1 {
     font-size: 2rem;
-  }
-
-  .search-box {
-    height: 50px;
   }
 
   .quick-grid,
@@ -1565,14 +1648,39 @@ input[type="range"]:hover {
   }
 
   .collection-header h1 {
-    font-size: 2.6rem;
+    font-size: 2.35rem;
   }
 
   .playlist-select {
+    max-width: 128px;
+  }
+
+  .track-table-head {
     display: none;
   }
 
+  .track-row {
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 8px 10px;
+    min-height: 72px;
+    padding: 8px;
+  }
+
   .track-row-actions {
-    gap: 0;
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+
+  .track-row-actions {
+    gap: 2px;
+  }
+
+  .transport {
+    gap: 6px;
+  }
+
+  .progress-line {
+    grid-template-columns: 38px 1fr 38px;
+    gap: 8px;
   }
 }

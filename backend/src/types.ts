@@ -14,6 +14,7 @@ export type Track = {
   duration: number;
   plays: number;
   liked: boolean;
+  uploadedById: string;
   uploadedByName: string;
   createdAt: string;
   audioUrl: string;

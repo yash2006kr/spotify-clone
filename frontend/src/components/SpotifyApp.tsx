@@ -35,6 +35,7 @@ import {
   Shuffle,
   SkipBack,
   SkipForward,
+  Trash2,
   Upload,
   UserRound,
   Volume2,
@@ -45,7 +46,7 @@ import { AuthScreen } from "@/components/AuthScreen";
 import { apiFetch, mediaUrl } from "@/lib/api";
 import type { AppUser, Playlist, Track } from "@/types";
 
-type ViewState = "home" | "liked" | `playlist:${string}`;
+type ViewState = "home" | "liked" | "songs" | "podcasts" | "recent" | "most" | `playlist:${string}`;
 type RepeatMode = "off" | "all" | "one";
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -95,6 +96,21 @@ function uniqueTracks(tracks: Track[]) {
     seen.add(track.id);
     return true;
   });
+}
+
+function isPodcastTrack(track: Track) {
+  return [track.title, track.album, track.genre].some((value) => value.toLowerCase().includes("podcast"));
+}
+
+function shuffledTracks(tracks: Track[]) {
+  const shuffled = [...tracks];
+
+  for (let index = shuffled.length - 1; index > 0; index -= 1) {
+    const randomIndex = Math.floor(Math.random() * (index + 1));
+    [shuffled[index], shuffled[randomIndex]] = [shuffled[randomIndex], shuffled[index]];
+  }
+
+  return shuffled;
 }
 
 type ArtworkProps = {
@@ -155,6 +171,8 @@ export function SpotifyApp() {
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [view, setView] = useState<ViewState>("home");
   const [search, setSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<Track[] | null>(null);
+  const [searchLoading, setSearchLoading] = useState(false);
   const [currentTrack, setCurrentTrack] = useState<Track | null>(null);
   const [playbackList, setPlaybackList] = useState<Track[]>([]);
   const [playbackIndex, setPlaybackIndex] = useState(0);
@@ -172,6 +190,8 @@ export function SpotifyApp() {
   const [queueOpen, setQueueOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
   const [friendsOpen, setFriendsOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [detailsMenuOpen, setDetailsMenuOpen] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(
     () => typeof window !== "undefined" && window.matchMedia?.("(display-mode: standalone)").matches
@@ -271,6 +291,12 @@ export function SpotifyApp() {
   }, [volume]);
 
   useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.loop = repeatMode === "one";
+    }
+  }, [repeatMode]);
+
+  useEffect(() => {
     const audio = audioRef.current;
 
     if (!audio || !currentTrack) {
@@ -301,22 +327,106 @@ export function SpotifyApp() {
       return newestFirst(tracks);
     }
 
-    return tracks.filter((track) =>
-      [track.title, track.artist, track.album, track.genre].some((value) => value.toLowerCase().includes(query))
+    return newestFirst(
+      tracks.filter((track) =>
+        [track.title, track.artist, track.album, track.genre].some((value) => value.toLowerCase().includes(query))
+      )
     );
   }, [search, tracks]);
 
+  useEffect(() => {
+    const query = search.trim();
+
+    if (!query || !user) {
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setSearchLoading(true);
+
+      try {
+        const result = await apiFetch(`/api/tracks?search=${encodeURIComponent(query)}`, {
+          cache: "no-store",
+          signal: controller.signal
+        });
+
+        if (!result.ok) {
+          setSearchResults([]);
+          return;
+        }
+
+        const data = await result.json();
+        const nextTracks = data.tracks || [];
+        setSearchResults(nextTracks);
+        setTracks((existing) => uniqueTracks([...nextTracks, ...existing]));
+      } catch {
+        if (!controller.signal.aborted) {
+          setSearchResults([]);
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setSearchLoading(false);
+        }
+      }
+    }, 240);
+
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [search, user]);
+
+  const selectedPlaylistId = view.startsWith("playlist:") ? view.slice("playlist:".length) : "";
+
   const selectedPlaylist = useMemo(() => {
-    if (!view.startsWith("playlist:")) {
+    if (!selectedPlaylistId) {
       return null;
     }
 
-    return playlists.find((playlist) => playlist.id === view.slice("playlist:".length)) || null;
-  }, [playlists, view]);
+    return playlists.find((playlist) => playlist.id === selectedPlaylistId) || null;
+  }, [playlists, selectedPlaylistId]);
+
+  useEffect(() => {
+    if (!selectedPlaylistId) {
+      return;
+    }
+
+    let active = true;
+
+    apiFetch(`/api/playlists/${selectedPlaylistId}`, { cache: "no-store" })
+      .then(async (result) => {
+        if (!active || !result.ok) {
+          return;
+        }
+
+        const data = await result.json();
+        const playlist = data.playlist as Playlist;
+
+        setPlaylists((existing) =>
+          existing.map((item) => (item.id === playlist.id ? { ...item, ...playlist } : item))
+        );
+
+        if (playlist.tracks?.length) {
+          setTracks((existing) => uniqueTracks([...playlist.tracks!, ...existing]));
+        }
+      })
+      .catch(() => undefined);
+
+    return () => {
+      active = false;
+    };
+  }, [selectedPlaylistId]);
 
   const selectedPlaylistTracks = useMemo(() => {
     if (!selectedPlaylist) {
       return [];
+    }
+
+    if (selectedPlaylist.tracks?.length) {
+      return selectedPlaylist.trackIds
+        .map((id) => selectedPlaylist.tracks?.find((track) => track.id === id) || tracks.find((track) => track.id === id))
+        .filter((track): track is Track => Boolean(track));
     }
 
     return selectedPlaylist.trackIds
@@ -324,9 +434,34 @@ export function SpotifyApp() {
       .filter((track): track is Track => Boolean(track));
   }, [selectedPlaylist, tracks]);
 
+  const allTracks = useMemo(() => newestFirst(tracks), [tracks]);
+  const podcastTracks = useMemo(() => allTracks.filter(isPodcastTrack), [allTracks]);
+  const searchTracks = search.trim() ? searchResults ?? filteredTracks : filteredTracks;
+  const allTopTracks = useMemo(() => [...tracks].sort((a, b) => b.plays - a.plays), [tracks]);
+
   const activeTracks = useMemo(() => {
+    if (search.trim()) {
+      return searchTracks;
+    }
+
     if (view === "liked") {
       return likedTracks;
+    }
+
+    if (view === "songs") {
+      return allTracks;
+    }
+
+    if (view === "podcasts") {
+      return podcastTracks;
+    }
+
+    if (view === "recent") {
+      return allTracks;
+    }
+
+    if (view === "most") {
+      return allTopTracks;
     }
 
     if (selectedPlaylist) {
@@ -334,10 +469,21 @@ export function SpotifyApp() {
     }
 
     return filteredTracks;
-  }, [filteredTracks, likedTracks, selectedPlaylist, selectedPlaylistTracks, view]);
+  }, [
+    allTopTracks,
+    allTracks,
+    filteredTracks,
+    likedTracks,
+    podcastTracks,
+    search,
+    searchTracks,
+    selectedPlaylist,
+    selectedPlaylistTracks,
+    view
+  ]);
 
-  const recentTracks = useMemo(() => newestFirst(tracks).slice(0, 12), [tracks]);
-  const topTracks = useMemo(() => [...tracks].sort((a, b) => b.plays - a.plays).slice(0, 12), [tracks]);
+  const recentTracks = useMemo(() => allTracks.slice(0, 12), [allTracks]);
+  const topTracks = useMemo(() => allTopTracks.slice(0, 12), [allTopTracks]);
   const uploadedMix = useMemo(() => uniqueTracks([...likedTracks, ...topTracks, ...recentTracks]).slice(0, 12), [
     likedTracks,
     recentTracks,
@@ -351,6 +497,13 @@ export function SpotifyApp() {
 
   const totalDuration = currentTrack?.duration || loadedDuration;
 
+  const updateTrackEverywhere = useCallback((trackId: string, update: (track: Track) => Track) => {
+    setTracks((existing) => existing.map((track) => (track.id === trackId ? update(track) : track)));
+    setPlaybackList((existing) => existing.map((track) => (track.id === trackId ? update(track) : track)));
+    setManualQueue((existing) => existing.map((track) => (track.id === trackId ? update(track) : track)));
+    setCurrentTrack((track) => (track?.id === trackId ? update(track) : track));
+  }, []);
+
   const playTrack = useCallback((track: Track, source: Track[] = activeTracks) => {
     const list = source.length ? source : [track];
     const index = Math.max(0, list.findIndex((item) => item.id === track.id));
@@ -362,6 +515,20 @@ export function SpotifyApp() {
     setCurrentTime(0);
     setIsPlaying(true);
   }, [activeTracks]);
+
+  const playShuffled = useCallback(
+    (source: Track[] = activeTracks) => {
+      const list = shuffledTracks(source);
+
+      if (!list.length) {
+        return;
+      }
+
+      setShuffleOn(true);
+      playTrack(list[0], list);
+    },
+    [activeTracks, playTrack]
+  );
 
   const playFromManualQueue = useCallback((queue: Track[]) => {
     const [next, ...remaining] = queue;
@@ -393,7 +560,8 @@ export function SpotifyApp() {
     }
 
     if (shuffleOn && playbackList.length > 1) {
-      const nextIndex = Math.floor(Math.random() * playbackList.length);
+      const choices = playbackList.map((_, index) => index).filter((index) => index !== playbackIndex);
+      const nextIndex = choices[Math.floor(Math.random() * choices.length)] ?? 0;
       const next = playbackList[nextIndex];
       setPlaybackIndex(nextIndex);
       setCurrentTrack(next);
@@ -549,22 +717,55 @@ export function SpotifyApp() {
   const toggleLike = useCallback(
     async (track: Track) => {
       const nextLiked = !track.liked;
-      setTracks((existing) =>
-        existing.map((item) => (item.id === track.id ? { ...item, liked: nextLiked } : item))
-      );
+      updateTrackEverywhere(track.id, (item) => ({ ...item, liked: nextLiked }));
 
       const result = await apiFetch(`/api/library/likes/${track.id}`, {
         method: nextLiked ? "POST" : "DELETE"
       });
 
       if (!result.ok) {
-        setTracks((existing) =>
-          existing.map((item) => (item.id === track.id ? { ...item, liked: track.liked } : item))
-        );
+        updateTrackEverywhere(track.id, (item) => ({ ...item, liked: track.liked }));
         showToast("Could not update liked songs.");
       }
     },
-    [showToast]
+    [showToast, updateTrackEverywhere]
+  );
+
+  const deleteTrack = useCallback(
+    async (track: Track) => {
+      if (!window.confirm(`Delete "${track.title}" from the library?`)) {
+        return;
+      }
+
+      const result = await apiFetch(`/api/tracks/${track.id}`, { method: "DELETE" });
+      const data = await result.json().catch(() => ({}));
+
+      if (!result.ok) {
+        showToast(data.error || "Could not delete song.");
+        return;
+      }
+
+      setTracks((existing) => existing.filter((item) => item.id !== track.id));
+      setPlaylists((existing) =>
+        existing.map((playlist) => ({
+          ...playlist,
+          trackIds: playlist.trackIds.filter((id) => id !== track.id),
+          tracks: playlist.tracks?.filter((item) => item.id !== track.id)
+        }))
+      );
+      setManualQueue((existing) => existing.filter((item) => item.id !== track.id));
+      setPlaybackList((existing) => existing.filter((item) => item.id !== track.id));
+      setPlaybackIndex(0);
+
+      if (currentTrack?.id === track.id) {
+        setCurrentTrack(null);
+        setIsPlaying(false);
+        setCurrentTime(0);
+      }
+
+      showToast(`Deleted "${track.title}".`);
+    },
+    [currentTrack, showToast]
   );
 
   const addToQueue = useCallback(
@@ -633,6 +834,11 @@ export function SpotifyApp() {
     [selectedPlaylist, showToast]
   );
 
+  const canDeleteTrack = useCallback(
+    (track: Track) => Boolean(user && (!track.uploadedById || track.uploadedById === user.id)),
+    [user]
+  );
+
   async function handleLogout() {
     await apiFetch("/api/auth/logout", { method: "POST" });
     setUser(null);
@@ -641,6 +847,9 @@ export function SpotifyApp() {
     setTracks([]);
     setPlaylists([]);
     setView("home");
+    setSearch("");
+    setSearchResults(null);
+    setSearchLoading(false);
     setProfileOpen(false);
     setQueueOpen(false);
   }
@@ -816,14 +1025,39 @@ export function SpotifyApp() {
     );
   }
 
-  const activeTitle =
-    view === "liked" ? "Liked Songs" : selectedPlaylist ? selectedPlaylist.name : search ? "Search results" : "Home";
-  const activeSubtitle =
-    view === "liked"
+  const activeTitle = search
+    ? "Search results"
+    : view === "liked"
+      ? "Liked Songs"
+      : view === "songs"
+        ? "Songs"
+        : view === "podcasts"
+          ? "Podcasts"
+          : view === "recent"
+            ? "Recents"
+            : view === "most"
+              ? "Most played"
+              : selectedPlaylist
+                ? selectedPlaylist.name
+                : "Home";
+  const activeSubtitle = search
+    ? searchLoading
+      ? `Searching for "${search.trim()}"`
+      : `${activeTracks.length} ${activeTracks.length === 1 ? "result" : "results"} for "${search.trim()}"`
+    : view === "liked"
       ? `${likedTracks.length} liked ${likedTracks.length === 1 ? "song" : "songs"}`
-      : selectedPlaylist
-        ? `${selectedPlaylist.trackIds.length} songs by ${selectedPlaylist.ownerName}`
-        : `${tracks.length} songs uploaded by the community`;
+      : view === "songs"
+        ? `${allTracks.length} songs uploaded by the community`
+        : view === "podcasts"
+          ? `${podcastTracks.length} ${podcastTracks.length === 1 ? "podcast" : "podcasts"}`
+          : view === "recent"
+            ? `${allTracks.length} songs sorted by newest uploads`
+            : view === "most"
+              ? `${allTopTracks.length} songs sorted by play count`
+              : selectedPlaylist
+                ? `${selectedPlaylist.trackIds.length} songs by ${selectedPlaylist.ownerName}`
+                : `${tracks.length} songs uploaded by the community`;
+  const activeKicker = search ? "Search" : selectedPlaylist || view === "liked" ? "Playlist" : "Collection";
 
   return (
     <main className="spotify-shell">
@@ -848,11 +1082,24 @@ export function SpotifyApp() {
           <Home size={24} fill="currentColor" />
         </IconButton>
 
+        {!isInstalled && (
+          <IconButton label="Install app" onClick={handleInstallApp} className="install-icon-button">
+            <Download size={19} />
+          </IconButton>
+        )}
+
         <label className="search-box">
           <Search size={24} />
           <input
             onChange={(event) => {
-              setSearch(event.target.value);
+              const nextSearch = event.target.value;
+              setSearch(nextSearch);
+
+              if (!nextSearch.trim()) {
+                setSearchResults(null);
+                setSearchLoading(false);
+              }
+
               setView("home");
             }}
             placeholder="What do you want to play?"
@@ -861,19 +1108,17 @@ export function SpotifyApp() {
           />
         </label>
 
-        {!isInstalled && (
-          <button className="install-top-button" onClick={handleInstallApp} type="button">
-            <Download size={18} />
-            Install app
-          </button>
-        )}
-
         <button className="upload-top-button" onClick={() => setUploadOpen(true)} type="button">
           <Upload size={18} />
           Add songs
         </button>
 
         <div className="top-actions">
+          {!detailsOpen && currentTrack && (
+            <IconButton label="Show now playing" onClick={() => setDetailsOpen(true)}>
+              <Disc3 size={20} />
+            </IconButton>
+          )}
           <IconButton
             label="Notifications"
             onClick={() => {
@@ -961,7 +1206,7 @@ export function SpotifyApp() {
         </div>
       </header>
 
-      <section className="content-grid">
+      <section className={`content-grid ${detailsOpen ? "" : "details-closed"}`}>
         <aside className="library-panel panel">
           <div className="panel-header">
             <div className="panel-title">
@@ -1035,9 +1280,42 @@ export function SpotifyApp() {
         <section className="main-panel panel">
           <div className="hero-band">
             <div className="hero-tabs">
-              <button className="active" type="button">All</button>
-              <button type="button">Music</button>
-              <button type="button">Podcasts</button>
+              <button
+                className={view === "home" && !search ? "active" : ""}
+                onClick={() => {
+                  setSearch("");
+                  setSearchResults(null);
+                  setSearchLoading(false);
+                  setView("home");
+                }}
+                type="button"
+              >
+                All
+              </button>
+              <button
+                className={view === "songs" && !search ? "active" : ""}
+                onClick={() => {
+                  setSearch("");
+                  setSearchResults(null);
+                  setSearchLoading(false);
+                  setView("songs");
+                }}
+                type="button"
+              >
+                Songs
+              </button>
+              <button
+                className={view === "podcasts" && !search ? "active" : ""}
+                onClick={() => {
+                  setSearch("");
+                  setSearchResults(null);
+                  setSearchLoading(false);
+                  setView("podcasts");
+                }}
+                type="button"
+              >
+                Podcasts
+              </button>
             </div>
 
             <div className="quick-grid">
@@ -1078,9 +1356,30 @@ export function SpotifyApp() {
 
           {view === "home" && !search ? (
             <>
-              <Shelf title="Jump back in" tracks={uploadedMix} onPlay={playTrack} onQueue={addToQueue} onLike={toggleLike} />
-              <Shelf title="Recents" tracks={recentTracks} onPlay={playTrack} onQueue={addToQueue} onLike={toggleLike} />
-              <Shelf title="Most played" tracks={topTracks} onPlay={playTrack} onQueue={addToQueue} onLike={toggleLike} />
+              <Shelf
+                title="Jump back in"
+                tracks={uploadedMix}
+                onPlay={playTrack}
+                onQueue={addToQueue}
+                onLike={toggleLike}
+                onShowAll={() => setView("songs")}
+              />
+              <Shelf
+                title="Recents"
+                tracks={recentTracks}
+                onPlay={playTrack}
+                onQueue={addToQueue}
+                onLike={toggleLike}
+                onShowAll={() => setView("recent")}
+              />
+              <Shelf
+                title="Most played"
+                tracks={topTracks}
+                onPlay={playTrack}
+                onQueue={addToQueue}
+                onLike={toggleLike}
+                onShowAll={() => setView("most")}
+              />
             </>
           ) : (
             <section className="collection-view">
@@ -1098,7 +1397,7 @@ export function SpotifyApp() {
                 )}
                 <div>
                   <span className="collection-kicker">
-                    {view === "liked" ? "Playlist" : selectedPlaylist ? "Playlist" : "Search"}
+                    {activeKicker}
                   </span>
                   <h1>{activeTitle}</h1>
                   <p>{activeSubtitle}</p>
@@ -1111,6 +1410,15 @@ export function SpotifyApp() {
                     >
                       <Play fill="currentColor" size={24} />
                     </button>
+                    <IconButton
+                      active={shuffleOn}
+                      className="collection-shuffle"
+                      disabled={!activeTracks.length}
+                      label="Shuffle collection"
+                      onClick={() => playShuffled(activeTracks)}
+                    >
+                      <Shuffle size={22} />
+                    </IconButton>
                     {selectedPlaylist && (
                       <button className="ghost-button" onClick={() => setUploadOpen(true)} type="button">
                         <Upload size={17} />
@@ -1123,7 +1431,17 @@ export function SpotifyApp() {
 
               <TrackTable
                 addToPlaylist={addToPlaylist}
+                canDeleteTrack={canDeleteTrack}
                 currentTrack={currentTrack}
+                emptyDescription={
+                  search
+                    ? "Try a different title, artist, album, or genre."
+                    : view === "podcasts"
+                      ? "Podcast uploads will appear here."
+                      : "Uploaded music from any user will appear in the shared catalog."
+                }
+                emptyTitle={searchLoading ? "Searching..." : search ? "No songs found" : undefined}
+                onDelete={deleteTrack}
                 onLike={toggleLike}
                 onPlay={playTrack}
                 onQueue={addToQueue}
@@ -1136,77 +1454,100 @@ export function SpotifyApp() {
           )}
         </section>
 
-        <aside className="now-panel panel">
-          <div className="now-header">
-            <h2>{currentTrack?.artist || "Now playing"}</h2>
-            <IconButton label="More">
-              <MoreHorizontal size={20} />
-            </IconButton>
-          </div>
-
-          {currentTrack ? (
-            <>
-              <Artwork track={currentTrack} size="hero" />
-              <div className="now-title-line">
-                <div>
-                  <h3>{currentTrack.title}</h3>
-                  <p>{currentTrack.artist}</p>
-                </div>
-                <IconButton active={currentTrack.liked} label="Like song" onClick={() => toggleLike(currentTrack)}>
-                  <Heart fill={currentTrack.liked ? "currentColor" : "none"} size={21} />
+        {detailsOpen && (
+          <aside className="now-panel panel">
+            <div className="now-header">
+              <h2>{currentTrack?.artist || "Now playing"}</h2>
+              <div className="now-menu-wrap">
+                <IconButton
+                  active={detailsMenuOpen}
+                  label="Now playing options"
+                  onClick={() => setDetailsMenuOpen((open) => !open)}
+                >
+                  <MoreHorizontal size={20} />
                 </IconButton>
+                {detailsMenuOpen && (
+                  <div className="now-menu" role="menu">
+                    <button
+                      onClick={() => {
+                        setDetailsOpen(false);
+                        setDetailsMenuOpen(false);
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      <X size={16} />
+                      Close
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {currentTrack ? (
+              <>
+                <Artwork track={currentTrack} size="hero" />
+                <div className="now-title-line">
+                  <div>
+                    <h3>{currentTrack.title}</h3>
+                    <p>{currentTrack.artist}</p>
+                  </div>
+                  <IconButton active={currentTrack.liked} label="Like song" onClick={() => toggleLike(currentTrack)}>
+                    <Heart fill={currentTrack.liked ? "currentColor" : "none"} size={21} />
+                  </IconButton>
+                </div>
+
+                <section className="credits-box">
+                  <div className="credits-title">
+                    <h3>Credits</h3>
+                    <button type="button">Show all</button>
+                  </div>
+                  <div className="credit-row">
+                    <span>
+                      <strong>{currentTrack.artist}</strong>
+                      <small>Main Artist</small>
+                    </span>
+                    <button type="button">Follow</button>
+                  </div>
+                  <div className="credit-row">
+                    <span>
+                      <strong>{currentTrack.uploadedByName}</strong>
+                      <small>Uploader</small>
+                    </span>
+                    <button type="button">Follow</button>
+                  </div>
+                </section>
+              </>
+            ) : (
+              <div className="empty-now">
+                <Disc3 size={56} />
+                <h3>Pick a song</h3>
+                <p>Your uploads and community tracks will appear here while playing.</p>
+              </div>
+            )}
+
+            <section className="queue-box">
+              <div className="credits-title">
+                <h3>Next in queue</h3>
+                <button onClick={() => setManualQueue([])} type="button">Clear</button>
               </div>
 
-              <section className="credits-box">
-                <div className="credits-title">
-                  <h3>Credits</h3>
-                  <button type="button">Show all</button>
-                </div>
-                <div className="credit-row">
-                  <span>
-                    <strong>{currentTrack.artist}</strong>
-                    <small>Main Artist</small>
-                  </span>
-                  <button type="button">Follow</button>
-                </div>
-                <div className="credit-row">
-                  <span>
-                    <strong>{currentTrack.uploadedByName}</strong>
-                    <small>Uploader</small>
-                  </span>
-                  <button type="button">Follow</button>
-                </div>
-              </section>
-            </>
-          ) : (
-            <div className="empty-now">
-              <Disc3 size={56} />
-              <h3>Pick a song</h3>
-              <p>Your uploads and community tracks will appear here while playing.</p>
-            </div>
-          )}
-
-          <section className="queue-box">
-            <div className="credits-title">
-              <h3>Next in queue</h3>
-              <button onClick={() => setManualQueue([])} type="button">Clear</button>
-            </div>
-
-            {nextQueueTracks.length ? (
-              nextQueueTracks.map((track) => (
-                <button className="queue-item" key={`${track.id}-queue`} onClick={() => playTrack(track, tracks)} type="button">
-                  <Artwork track={track} size="sm" />
-                  <span>
-                    <strong>{track.title}</strong>
-                    <small>{track.artist}</small>
-                  </span>
-                </button>
-              ))
-            ) : (
-              <p className="queue-empty">Queue is empty.</p>
-            )}
-          </section>
-        </aside>
+              {nextQueueTracks.length ? (
+                nextQueueTracks.map((track) => (
+                  <button className="queue-item" key={`${track.id}-queue`} onClick={() => playTrack(track, tracks)} type="button">
+                    <Artwork track={track} size="sm" />
+                    <span>
+                      <strong>{track.title}</strong>
+                      <small>{track.artist}</small>
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <p className="queue-empty">Queue is empty.</p>
+              )}
+            </section>
+          </aside>
+        )}
       </section>
 
       <footer className="player-bar">
@@ -1251,7 +1592,7 @@ export function SpotifyApp() {
             <IconButton label="Next" onClick={playNext} disabled={!currentTrack && !tracks.length}>
               <SkipForward fill="currentColor" size={21} />
             </IconButton>
-            <IconButton active={repeatMode !== "off"} label="Repeat" onClick={cycleRepeat}>
+            <IconButton active={repeatMode !== "off"} label={`Repeat ${repeatMode}`} onClick={cycleRepeat}>
               {repeatMode === "one" ? <Repeat1 size={20} /> : <Repeat size={20} />}
             </IconButton>
             <IconButton active={queueOpen || nextQueueTracks.length > 0} label="Queue" onClick={() => setQueueOpen(true)}>
@@ -1282,6 +1623,11 @@ export function SpotifyApp() {
         </div>
 
         <div className="player-tools">
+          {!detailsOpen && currentTrack && (
+            <IconButton label="Show now playing" onClick={() => setDetailsOpen(true)}>
+              <Disc3 size={20} />
+            </IconButton>
+          )}
           <IconButton active={queueOpen || nextQueueTracks.length > 0} label="Queue" onClick={() => setQueueOpen(true)}>
             <ListMusic size={20} />
           </IconButton>
@@ -1434,11 +1780,12 @@ type ShelfProps = {
   onLike: (track: Track) => void;
   onPlay: (track: Track, source: Track[]) => void;
   onQueue: (track: Track) => void;
+  onShowAll: () => void;
   title: string;
   tracks: Track[];
 };
 
-function Shelf({ onLike, onPlay, onQueue, title, tracks }: ShelfProps) {
+function Shelf({ onLike, onPlay, onQueue, onShowAll, title, tracks }: ShelfProps) {
   if (!tracks.length) {
     return (
       <section className="shelf">
@@ -1457,7 +1804,7 @@ function Shelf({ onLike, onPlay, onQueue, title, tracks }: ShelfProps) {
     <section className="shelf">
       <div className="shelf-header">
         <h2>{title}</h2>
-        <button type="button">Show all</button>
+        <button onClick={onShowAll} type="button">Show all</button>
       </div>
       <div className="card-row">
         {tracks.map((track) => (
@@ -1487,7 +1834,11 @@ function Shelf({ onLike, onPlay, onQueue, title, tracks }: ShelfProps) {
 
 type TrackTableProps = {
   addToPlaylist: (playlistId: string, track: Track) => void;
+  canDeleteTrack: (track: Track) => boolean;
   currentTrack: Track | null;
+  emptyDescription?: string;
+  emptyTitle?: string;
+  onDelete: (track: Track) => void;
   onLike: (track: Track) => void;
   onPlay: (track: Track, source: Track[]) => void;
   onQueue: (track: Track) => void;
@@ -1499,7 +1850,11 @@ type TrackTableProps = {
 
 function TrackTable({
   addToPlaylist,
+  canDeleteTrack,
   currentTrack,
+  emptyDescription = "Uploaded music from any user will appear in the shared catalog.",
+  emptyTitle = "No songs here yet",
+  onDelete,
   onLike,
   onPlay,
   onQueue,
@@ -1512,8 +1867,8 @@ function TrackTable({
     return (
       <div className="empty-table">
         <Music2 size={44} />
-        <h3>No songs here yet</h3>
-        <p>Uploaded music from any user will appear in the shared catalog.</p>
+        <h3>{emptyTitle}</h3>
+        <p>{emptyDescription}</p>
       </div>
     );
   }
@@ -1573,6 +1928,11 @@ function TrackTable({
             {onRemove && (
               <IconButton label="Remove from playlist" onClick={() => onRemove(track)}>
                 <X size={17} />
+              </IconButton>
+            )}
+            {canDeleteTrack(track) && (
+              <IconButton label="Delete song" onClick={() => onDelete(track)}>
+                <Trash2 size={17} />
               </IconButton>
             )}
             <span>{formatTime(track.duration)}</span>
