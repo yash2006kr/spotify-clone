@@ -57,9 +57,9 @@ export async function POST(request: NextRequest) {
     );
 
     const user = (await users.findOne({ email })) as UserDocument;
-    await setSession(user);
+    const sessionToken = await setSession(user);
 
-    return NextResponse.json({ user: userToClient(user) });
+    return NextResponse.json({ sessionToken, user: userToClient(user) });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: "Google sign-in failed." }, { status: 401 });

@@ -45,9 +45,9 @@ export async function POST(request: NextRequest) {
     } as UserDocument);
 
     const user = (await users.findOne({ _id: result.insertedId })) as UserDocument;
-    await setSession(user);
+    const sessionToken = await setSession(user);
 
-    return NextResponse.json({ user: userToClient(user) }, { status: 201 });
+    return NextResponse.json({ sessionToken, user: userToClient(user) }, { status: 201 });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: "Unable to create account." }, { status: 500 });

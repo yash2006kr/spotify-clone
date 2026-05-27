@@ -1,7 +1,7 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { ObjectId } from "mongodb";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 
 import "@/lib/env";
 import { ensureIndexes, getDb } from "@/lib/mongodb";
@@ -35,6 +35,18 @@ function jwtSecret() {
   return secret;
 }
 
+export function createSessionToken(user: UserDocument) {
+  return jwt.sign(
+    {
+      sub: user._id.toString(),
+      email: user.email,
+      name: user.name
+    } satisfies SessionPayload,
+    jwtSecret(),
+    { expiresIn: "30d" }
+  );
+}
+
 export async function hashPassword(password: string) {
   return bcrypt.hash(password, 12);
 }
@@ -44,15 +56,7 @@ export async function verifyPassword(password: string, hash: string) {
 }
 
 export async function setSession(user: UserDocument) {
-  const token = jwt.sign(
-    {
-      sub: user._id.toString(),
-      email: user.email,
-      name: user.name
-    } satisfies SessionPayload,
-    jwtSecret(),
-    { expiresIn: "30d" }
-  );
+  const token = createSessionToken(user);
 
   const cookieStore = await cookies();
   const crossSite = process.env.NODE_ENV === "production";
@@ -64,6 +68,8 @@ export async function setSession(user: UserDocument) {
     maxAge: 60 * 60 * 24 * 30,
     path: "/"
   });
+
+  return token;
 }
 
 export async function clearSession() {
@@ -81,25 +87,36 @@ export async function clearSession() {
 
 export async function getCurrentUser(): Promise<UserDocument | null> {
   const cookieStore = await cookies();
-  const token = cookieStore.get(sessionCookieName)?.value;
+  const cookieToken = cookieStore.get(sessionCookieName)?.value;
+  const authorization = (await headers()).get("authorization") || "";
+  const bearerToken = authorization.toLowerCase().startsWith("bearer ") ? authorization.slice(7).trim() : "";
+  const tokens = [...new Set([cookieToken, bearerToken].filter(Boolean))] as string[];
 
-  if (!token) {
+  if (!tokens.length) {
     return null;
   }
 
-  try {
-    const payload = jwt.verify(token, jwtSecret()) as SessionPayload;
+  for (const token of tokens) {
+    try {
+      const payload = jwt.verify(token, jwtSecret()) as SessionPayload;
 
-    if (!payload.sub || !ObjectId.isValid(payload.sub)) {
-      return null;
+      if (!payload.sub || !ObjectId.isValid(payload.sub)) {
+        continue;
+      }
+
+      await ensureIndexes();
+      const db = await getDb();
+      const user = await db.collection<UserDocument>("users").findOne({ _id: new ObjectId(payload.sub) });
+
+      if (user) {
+        return user;
+      }
+    } catch {
+      continue;
     }
-
-    await ensureIndexes();
-    const db = await getDb();
-    return (await db.collection<UserDocument>("users").findOne({ _id: new ObjectId(payload.sub) })) || null;
-  } catch {
-    return null;
   }
+
+  return null;
 }
 
 export async function requireUser() {

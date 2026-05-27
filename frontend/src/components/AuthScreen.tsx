@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Loader2, Lock, Mail, Music2, UserRound } from "lucide-react";
 
-import { apiFetch } from "@/lib/api";
+import { apiFetch, storeSessionToken } from "@/lib/api";
 import type { AppUser, AuthMode } from "@/types";
 
 declare global {
@@ -67,6 +67,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           throw new Error(data.error || "Google sign-in failed.");
         }
 
+        storeSessionToken(data.sessionToken);
         onAuthenticated(data.user);
       } catch (nextError) {
         setError((nextError as Error).message);
@@ -138,6 +139,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
         throw new Error(data.error || "Authentication failed.");
       }
 
+      storeSessionToken(data.sessionToken);
       onAuthenticated(data.user);
     } catch (nextError) {
       setError((nextError as Error).message);

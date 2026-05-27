@@ -45,7 +45,7 @@ import {
 } from "lucide-react";
 
 import { AuthScreen } from "@/components/AuthScreen";
-import { apiFetch, mediaUrl } from "@/lib/api";
+import { apiFetch, clearSessionToken, mediaUrl } from "@/lib/api";
 import type { AppUser, Playlist, Track } from "@/types";
 
 type ViewState =
@@ -353,6 +353,7 @@ export function SpotifyApp() {
   const [friendsOpen, setFriendsOpen] = useState(false);
   const [detailsOpen, setDetailsOpen] = useState(true);
   const [detailsMenuOpen, setDetailsMenuOpen] = useState(false);
+  const [mobileLibraryOpen, setMobileLibraryOpen] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(
     () => typeof window !== "undefined" && window.matchMedia?.("(display-mode: standalone)").matches
@@ -385,6 +386,48 @@ export function SpotifyApp() {
   const showToast = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
+  }, []);
+
+  const resetHomeView = useCallback(() => {
+    setView("home");
+    setSearch("");
+    setSearchResults(null);
+    setSearchLoading(false);
+    setLibraryFilter("all");
+    setMobileLibraryOpen(false);
+    setDetailsOpen(true);
+    setDetailsMenuOpen(false);
+    setProfileOpen(false);
+    setQueueOpen(false);
+    setActivityOpen(false);
+    setFriendsOpen(false);
+    setUploadOpen(false);
+    setPlaylistOpen(false);
+    setUploadTargetPlaylistId(null);
+  }, []);
+
+  const handleHomeButton = useCallback(() => {
+    resetHomeView();
+    setCurrentTrack(null);
+    setPlaybackList([]);
+    setPlaybackIndex(0);
+    setManualQueue([]);
+    setIsPlaying(false);
+    setCurrentTime(0);
+    setLoadedDuration(0);
+  }, [resetHomeView]);
+
+  const openMobileLibrary = useCallback(() => {
+    setMobileLibraryOpen(true);
+    setProfileOpen(false);
+    setQueueOpen(false);
+    setActivityOpen(false);
+    setFriendsOpen(false);
+  }, []);
+
+  const selectView = useCallback((nextView: ViewState) => {
+    setView(nextView);
+    setMobileLibraryOpen(false);
   }, []);
 
   const openUpload = useCallback((playlistId?: string | null) => {
@@ -1153,6 +1196,7 @@ export function SpotifyApp() {
 
   async function handleLogout() {
     await apiFetch("/api/auth/logout", { method: "POST" });
+    clearSessionToken();
     setUser(null);
     setCurrentTrack(null);
     setIsPlaying(false);
@@ -1230,7 +1274,7 @@ export function SpotifyApp() {
       if (playlistCoverFileRef.current) {
         playlistCoverFileRef.current.value = "";
       }
-      setView(`playlist:${data.playlist.id}`);
+      selectView(`playlist:${data.playlist.id}`);
     } catch (error) {
       showToast((error as Error).message);
     } finally {
@@ -1495,7 +1539,7 @@ export function SpotifyApp() {
   const gridStyle = { "--library-width": `${libraryWidth}px` } as CSSProperties;
 
   return (
-    <main className="spotify-shell">
+    <main className={`spotify-shell ${mobileLibraryOpen ? "mobile-library-open" : ""}`}>
       <audio
         onEnded={handleEnded}
         onLoadedMetadata={(event) => setLoadedDuration(event.currentTarget.duration || currentTrack?.duration || 0)}
@@ -1513,8 +1557,17 @@ export function SpotifyApp() {
           <span />
         </div>
 
-        <IconButton label="Home" onClick={() => setView("home")} active={view === "home"} className="home-button">
+        <IconButton label="Home" onClick={handleHomeButton} active={view === "home" && !mobileLibraryOpen} className="home-button">
           <Home size={24} fill="currentColor" />
+        </IconButton>
+
+        <IconButton
+          label="Open library"
+          onClick={openMobileLibrary}
+          active={mobileLibraryOpen}
+          className="mobile-library-button"
+        >
+          <Library size={22} />
         </IconButton>
 
         {!isInstalled && (
@@ -1536,6 +1589,7 @@ export function SpotifyApp() {
               }
 
               setView("home");
+              setMobileLibraryOpen(false);
             }}
             placeholder="What do you want to play?"
             type="search"
@@ -1699,7 +1753,7 @@ export function SpotifyApp() {
             {(libraryFilter === "all" || libraryFilter === "playlists") && (
               <button
                 className={`library-item ${view === "liked" ? "selected" : ""}`}
-                onClick={() => setView("liked")}
+                onClick={() => selectView("liked")}
                 type="button"
               >
                 <Artwork liked size="sm" />
@@ -1715,7 +1769,7 @@ export function SpotifyApp() {
                 <button
                   className={`library-item ${view === `playlist:${playlist.id}` ? "selected" : ""}`}
                   key={playlist.id}
-                  onClick={() => setView(`playlist:${playlist.id}`)}
+                  onClick={() => selectView(`playlist:${playlist.id}`)}
                   type="button"
                 >
                   <PlaylistArtwork playlist={playlist} />
@@ -1731,7 +1785,7 @@ export function SpotifyApp() {
                 <button
                   className={`library-item ${selectedAlbumName === album.name ? "selected" : ""}`}
                   key={album.name}
-                  onClick={() => setView(collectionView("album", album.name))}
+                  onClick={() => selectView(collectionView("album", album.name))}
                   type="button"
                 >
                   <Artwork track={album.cover} size="sm" />
@@ -1747,7 +1801,7 @@ export function SpotifyApp() {
                 <button
                   className={`library-item ${selectedArtistName === artist.name ? "selected" : ""}`}
                   key={artist.name}
-                  onClick={() => setView(collectionView("artist", artist.name))}
+                  onClick={() => selectView(collectionView("artist", artist.name))}
                   type="button"
                 >
                   <Artwork circle track={artist.cover} size="sm" />
@@ -1763,7 +1817,10 @@ export function SpotifyApp() {
                 <button
                   className="library-item"
                   key={track.id}
-                  onClick={() => playTrack(track, recentTracks)}
+                  onClick={() => {
+                    setMobileLibraryOpen(false);
+                    playTrack(track, recentTracks);
+                  }}
                   type="button"
                 >
                   <Artwork track={track} size="sm" />
@@ -1797,12 +1854,7 @@ export function SpotifyApp() {
             <div className="hero-tabs">
               <button
                 className={view === "home" && !search ? "active" : ""}
-                onClick={() => {
-                  setSearch("");
-                  setSearchResults(null);
-                  setSearchLoading(false);
-                  setView("home");
-                }}
+                onClick={resetHomeView}
                 type="button"
               >
                 All
@@ -1813,7 +1865,7 @@ export function SpotifyApp() {
                   setSearch("");
                   setSearchResults(null);
                   setSearchLoading(false);
-                  setView("songs");
+                  selectView("songs");
                 }}
                 type="button"
               >
@@ -1825,7 +1877,7 @@ export function SpotifyApp() {
                   setSearch("");
                   setSearchResults(null);
                   setSearchLoading(false);
-                  setView("podcasts");
+                  selectView("podcasts");
                 }}
                 type="button"
               >
@@ -1834,7 +1886,7 @@ export function SpotifyApp() {
             </div>
 
             <div className="quick-grid">
-              <button className="quick-tile" onClick={() => setView("liked")} type="button">
+              <button className="quick-tile" onClick={() => selectView("liked")} type="button">
                 <Artwork liked size="sm" />
                 <span>Liked Songs</span>
               </button>
@@ -1848,7 +1900,7 @@ export function SpotifyApp() {
                 <button
                   className="quick-tile"
                   key={playlist.id}
-                  onClick={() => setView(`playlist:${playlist.id}`)}
+                  onClick={() => selectView(`playlist:${playlist.id}`)}
                   type="button"
                 >
                   <PlaylistArtwork playlist={playlist} />
@@ -1875,7 +1927,7 @@ export function SpotifyApp() {
                 onLike={toggleLike}
                 onDelete={deleteTrack}
                 canDeleteTrack={canDeleteTrack}
-                onShowAll={() => setView("songs")}
+                onShowAll={() => selectView("songs")}
               />
               <Shelf
                 title="Recents"
@@ -1885,7 +1937,7 @@ export function SpotifyApp() {
                 onLike={toggleLike}
                 onDelete={deleteTrack}
                 canDeleteTrack={canDeleteTrack}
-                onShowAll={() => setView("recent")}
+                onShowAll={() => selectView("recent")}
               />
               <Shelf
                 title="Most played"
@@ -1895,7 +1947,7 @@ export function SpotifyApp() {
                 onLike={toggleLike}
                 onDelete={deleteTrack}
                 canDeleteTrack={canDeleteTrack}
-                onShowAll={() => setView("most")}
+                onShowAll={() => selectView("most")}
               />
             </>
           ) : (
@@ -2122,6 +2174,79 @@ export function SpotifyApp() {
               <Heart fill={currentTrack.liked ? "currentColor" : "none"} size={18} />
             </IconButton>
           )}
+        </div>
+
+        <div className="mobile-action-dock">
+          <button className="mobile-upload-button" onClick={() => openUpload(selectedPlaylist?.id)} type="button">
+            <Upload size={18} />
+            Add songs
+          </button>
+          <div className="mobile-action-icons">
+            <IconButton
+              label="Notifications"
+              onClick={() => {
+                setActivityOpen(true);
+                setProfileOpen(false);
+              }}
+            >
+              <Bell size={20} />
+            </IconButton>
+            <IconButton
+              label="Friends"
+              onClick={() => {
+                setFriendsOpen(true);
+                setProfileOpen(false);
+              }}
+            >
+              <UserRound size={20} />
+            </IconButton>
+            <div className="mobile-profile-wrap">
+              <button
+                aria-expanded={profileOpen}
+                aria-haspopup="menu"
+                className={`avatar-button ${profileOpen ? "active" : ""}`}
+                onClick={() => setProfileOpen((open) => !open)}
+                title={user.email}
+                type="button"
+              >
+                {user.picture ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img alt="" src={user.picture} />
+                ) : (
+                  user.name.slice(0, 1).toUpperCase()
+                )}
+              </button>
+              {profileOpen && (
+                <div className="profile-popover mobile-profile-popover" role="menu">
+                  <div className="profile-summary">
+                    <button className="avatar-button large" title={user.email} type="button">
+                      {user.picture ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img alt="" src={user.picture} />
+                      ) : (
+                        user.name.slice(0, 1).toUpperCase()
+                      )}
+                    </button>
+                    <span>
+                      <strong>{user.name}</strong>
+                      <small>{user.email}</small>
+                    </span>
+                  </div>
+                  <button onClick={() => setPlaylistOpen(true)} role="menuitem" type="button">
+                    <Plus size={18} />
+                    Create playlist
+                  </button>
+                  <button onClick={handleLogout} role="menuitem" type="button">
+                    <LogOut size={18} />
+                    Log out
+                  </button>
+                </div>
+              )}
+            </div>
+            <IconButton label="Log out" onClick={handleLogout}>
+              <LogOut size={20} />
+            </IconButton>
+          </div>
         </div>
 
         <div className="player-center">

@@ -21,9 +21,9 @@ export async function POST(request: NextRequest) {
     }
 
     await db.collection("users").updateOne({ _id: user._id }, { $set: { updatedAt: new Date() } });
-    await setSession(user);
+    const sessionToken = await setSession(user);
 
-    return NextResponse.json({ user: userToClient(user) });
+    return NextResponse.json({ sessionToken, user: userToClient(user) });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: "Unable to sign in." }, { status: 500 });
