@@ -1,40 +1,58 @@
 # Deployment
 
-This app cannot be hosted as a plain GitHub Pages site because it uses Next.js API routes for auth, MongoDB, GridFS uploads, and audio streaming. GitHub Pages is for static HTML/CSS/JavaScript hosting, and Next.js API routes are not available in static exports.
+This app is now split into `frontend/` and `backend/` so each side can be hosted separately.
 
-GitHub should be the source repo, and a Node-capable host should build and run the app from that repo.
+The frontend is a Next.js UI. The backend is a separate Next.js API service for auth, MongoDB, GridFS uploads, and audio streaming.
 
 ## Recommended Hosting
 
-Use a Node web service such as Render, Railway, Fly.io, a VPS, or another platform that supports long-running Node apps and environment variables. Vercel can run Next.js, but large music uploads are often better on a Node service because serverless request limits can be tight.
+Use Node-capable services such as Render, Railway, Fly.io, a VPS, or Vercel. Large music uploads are often better on a long-running Node service because serverless request limits can be tight.
 
 ## Required Environment Variables
 
-Set these on the host:
+Backend variables:
 
 ```bash
 MONGODB_URI="mongodb+srv://..."
 MONGODB_DB="spotify_clone"
 JWT_SECRET="generate-a-long-random-secret"
 GOOGLE_CLIENT_ID="your-google-oauth-client-id"
+FRONTEND_URL="https://your-frontend.example"
+```
+
+Frontend variables:
+
+```bash
+NEXT_PUBLIC_API_URL="https://your-backend.example"
 NEXT_PUBLIC_GOOGLE_CLIENT_ID="your-google-oauth-client-id"
 ```
 
-## Generic Node Host Settings
+## Backend Host Settings
 
-Build command:
+Root directory: `backend`
 
 ```bash
-npm install && npm run build
+npm install
+npm run build
 ```
 
 Start command:
 
 ```bash
-npm run start
+npm start
 ```
 
-Use Node.js 20 or newer. After the site is deployed over HTTPS, Android Chrome can show the install option and lock-screen media controls.
+## Frontend Host Settings
+
+Root directory: `frontend`
+
+```bash
+npm install
+npm run build
+npm start
+```
+
+Use Node.js 20 or newer. Add both deployed origins to your Google OAuth web client: the frontend origin for the button and the backend origin if your Google console requires it.
 
 ## Useful Docs
 

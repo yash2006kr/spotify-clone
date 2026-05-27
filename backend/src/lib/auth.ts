@@ -54,11 +54,12 @@ export async function setSession(user: UserDocument) {
   );
 
   const cookieStore = await cookies();
+  const crossSite = Boolean(process.env.FRONTEND_URL && process.env.NODE_ENV === "production");
 
   cookieStore.set(sessionCookieName, token, {
     httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
+    sameSite: crossSite ? "none" : "lax",
+    secure: crossSite || process.env.NODE_ENV === "production",
     maxAge: 60 * 60 * 24 * 30,
     path: "/"
   });
@@ -66,7 +67,15 @@ export async function setSession(user: UserDocument) {
 
 export async function clearSession() {
   const cookieStore = await cookies();
-  cookieStore.delete(sessionCookieName);
+  const crossSite = Boolean(process.env.FRONTEND_URL && process.env.NODE_ENV === "production");
+
+  cookieStore.set(sessionCookieName, "", {
+    httpOnly: true,
+    sameSite: crossSite ? "none" : "lax",
+    secure: crossSite || process.env.NODE_ENV === "production",
+    maxAge: 0,
+    path: "/"
+  });
 }
 
 export async function getCurrentUser(): Promise<UserDocument | null> {

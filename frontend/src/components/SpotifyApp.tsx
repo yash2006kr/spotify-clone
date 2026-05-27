@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 
 import { AuthScreen } from "@/components/AuthScreen";
+import { apiFetch, mediaUrl } from "@/lib/api";
 import type { AppUser, Playlist, Track } from "@/types";
 
 type ViewState = "home" | "liked" | `playlist:${string}`;
@@ -110,7 +111,7 @@ function Artwork({ track, size = "md", circle = false, liked = false }: ArtworkP
     <div className={`artwork artwork-${size} ${circle ? "circle" : ""}`} style={style}>
       {track?.coverUrl ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img alt="" src={track.coverUrl} />
+        <img alt="" src={mediaUrl(track.coverUrl) || ""} />
       ) : liked ? (
         <Heart fill="currentColor" size={size === "hero" ? 74 : 26} />
       ) : (
@@ -197,8 +198,8 @@ export function SpotifyApp() {
 
   const loadLibrary = useCallback(async () => {
     const [trackResult, playlistResult] = await Promise.all([
-      fetch("/api/tracks", { cache: "no-store" }),
-      fetch("/api/playlists", { cache: "no-store" })
+      apiFetch("/api/tracks", { cache: "no-store" }),
+      apiFetch("/api/playlists", { cache: "no-store" })
     ]);
 
     if (trackResult.ok) {
@@ -240,7 +241,7 @@ export function SpotifyApp() {
   useEffect(() => {
     let active = true;
 
-    fetch("/api/auth/me", { cache: "no-store" })
+    apiFetch("/api/auth/me", { cache: "no-store" })
       .then(async (result) => {
         if (!active) {
           return;
@@ -288,7 +289,7 @@ export function SpotifyApp() {
       return;
     }
 
-    fetch(`/api/tracks/${currentTrack.id}/play`, { method: "POST" }).catch(() => undefined);
+    apiFetch(`/api/tracks/${currentTrack.id}/play`, { method: "POST" }).catch(() => undefined);
   }, [currentTrack]);
 
   const likedTracks = useMemo(() => tracks.filter((track) => track.liked), [tracks]);
@@ -475,7 +476,7 @@ export function SpotifyApp() {
       album: currentTrack.album,
       artwork: [
         {
-          src: currentTrack.coverUrl || "/icon.svg",
+          src: mediaUrl(currentTrack.coverUrl) || "/icon.svg",
           sizes: currentTrack.coverUrl ? "512x512" : "any",
           type: currentTrack.coverUrl ? "image/jpeg" : "image/svg+xml"
         }
@@ -552,7 +553,7 @@ export function SpotifyApp() {
         existing.map((item) => (item.id === track.id ? { ...item, liked: nextLiked } : item))
       );
 
-      const result = await fetch(`/api/library/likes/${track.id}`, {
+      const result = await apiFetch(`/api/library/likes/${track.id}`, {
         method: nextLiked ? "POST" : "DELETE"
       });
 
@@ -581,7 +582,7 @@ export function SpotifyApp() {
         return;
       }
 
-      const result = await fetch(`/api/playlists/${playlistId}/tracks`, {
+      const result = await apiFetch(`/api/playlists/${playlistId}/tracks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ trackId: track.id })
@@ -610,7 +611,7 @@ export function SpotifyApp() {
         return;
       }
 
-      const result = await fetch(`/api/playlists/${selectedPlaylist.id}/tracks`, {
+      const result = await apiFetch(`/api/playlists/${selectedPlaylist.id}/tracks`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ trackId: track.id })
@@ -633,7 +634,7 @@ export function SpotifyApp() {
   );
 
   async function handleLogout() {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await apiFetch("/api/auth/logout", { method: "POST" });
     setUser(null);
     setCurrentTrack(null);
     setIsPlaying(false);
@@ -674,7 +675,7 @@ export function SpotifyApp() {
       return;
     }
 
-    const result = await fetch("/api/playlists", {
+    const result = await apiFetch("/api/playlists", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(playlistForm)
@@ -751,7 +752,7 @@ export function SpotifyApp() {
     setUploading(true);
 
     try {
-      const result = await fetch("/api/tracks", {
+      const result = await apiFetch("/api/tracks", {
         method: "POST",
         body: formData
       });
@@ -833,7 +834,7 @@ export function SpotifyApp() {
         playsInline
         preload="metadata"
         ref={audioRef}
-        src={currentTrack?.audioUrl}
+        src={mediaUrl(currentTrack?.audioUrl) || undefined}
       />
 
       <header className="top-bar">

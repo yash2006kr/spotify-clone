@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { Loader2, Lock, Mail, Music2, UserRound } from "lucide-react";
 
+import { apiFetch } from "@/lib/api";
 import type { AppUser, AuthMode } from "@/types";
 
 declare global {
@@ -46,7 +47,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
   useEffect(() => {
-    if (!googleClientId || !googleButtonRef.current) {
+    if (!googleClientId) {
       return;
     }
 
@@ -55,7 +56,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       setError("");
 
       try {
-        const result = await fetch("/api/auth/google", {
+        const result = await apiFetch("/api/auth/google", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ credential: response.credential })
@@ -79,6 +80,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
         return;
       }
 
+      googleButtonRef.current.innerHTML = "";
       window.google.accounts.id.initialize({
         client_id: googleClientId,
         callback: handleGoogleCredential
@@ -98,11 +100,24 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       return;
     }
 
-    const script = document.createElement("script");
-    script.src = "https://accounts.google.com/gsi/client";
-    script.async = true;
-    script.defer = true;
-    script.onload = renderGoogleButton;
+    const existingScript = document.getElementById("google-identity-services");
+    const script = existingScript || document.createElement("script");
+
+    script.addEventListener("load", renderGoogleButton, { once: true });
+    script.addEventListener(
+      "error",
+      () => setError("Google sign-in could not load. Check your network and Google client ID."),
+      { once: true }
+    );
+
+    if (existingScript) {
+      return;
+    }
+
+    script.id = "google-identity-services";
+    script.setAttribute("src", "https://accounts.google.com/gsi/client");
+    script.setAttribute("async", "true");
+    script.setAttribute("defer", "true");
     document.head.appendChild(script);
   }, [googleClientId, onAuthenticated]);
 
@@ -112,7 +127,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
     setError("");
 
     try {
-      const result = await fetch(`/api/auth/${mode === "login" ? "login" : "register"}`, {
+      const result = await apiFetch(`/api/auth/${mode === "login" ? "login" : "register"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, email, password })
