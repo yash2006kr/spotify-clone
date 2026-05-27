@@ -1,4 +1,4 @@
-# Spotify Clone
+# spotify
 
 A Spotify-style music app split into separate deployable frontend and backend Next.js services, backed by MongoDB and GridFS.
 
@@ -22,12 +22,12 @@ npm run dev:backend
 npm run dev:frontend
 ```
 
-Open `http://localhost:3000`. The backend runs on `http://localhost:4000`.
+Open the frontend dev URL printed by Next.js. The deployed frontend uses the Render backend by default.
 
 Frontend variables:
 
 ```bash
-NEXT_PUBLIC_API_URL="http://localhost:4000"
+NEXT_PUBLIC_API_URL="https://spotify-clone-backend-6jgx.onrender.com"
 NEXT_PUBLIC_GOOGLE_CLIENT_ID="your-google-oauth-client-id"
 ```
 
@@ -38,7 +38,7 @@ MONGODB_URI="mongodb+srv://..."
 MONGODB_DB="spotify_clone"
 JWT_SECRET="generate-a-long-random-secret"
 GOOGLE_CLIENT_ID="your-google-oauth-client-id"
-FRONTEND_URL="http://localhost:3000"
+FRONTEND_URL="https://spotify-clone-frontend-pnzb.onrender.com"
 ```
 
 For Google sign-in, create an OAuth web client in Google Cloud and set both `GOOGLE_CLIENT_ID` and `NEXT_PUBLIC_GOOGLE_CLIENT_ID`.

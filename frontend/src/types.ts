@@ -25,6 +25,8 @@ export type Playlist = {
   id: string;
   name: string;
   description: string;
+  coverUrl: string | null;
+  coverColor: string;
   isPublic: boolean;
   trackIds: string[];
   ownerName: string;

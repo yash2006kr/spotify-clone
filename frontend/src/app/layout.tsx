@@ -3,18 +3,18 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  applicationName: "Spotify Clone",
-  title: "Spotify Clone",
+  applicationName: "spotify",
+  title: "spotify",
   description: "A full-stack Spotify-style music player with MongoDB uploads.",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "Spotify Clone"
+    title: "spotify"
   },
   icons: {
-    icon: "/icon.svg",
-    apple: "/icon.svg"
+    icon: "/spotify-logo.jpeg",
+    apple: "/spotify-logo.jpeg"
   }
 };
 

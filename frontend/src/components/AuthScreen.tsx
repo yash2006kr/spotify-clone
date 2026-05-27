@@ -161,9 +161,10 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       <section className="auth-card">
         <div className="brand-mark">
           <span className="brand-icon">
-            <Music2 size={22} />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img alt="" src="/spotify-logo.jpeg" />
           </span>
-          <span>Spotify Clone</span>
+          <span>spotify</span>
         </div>
 
         <h1>{mode === "login" ? "Log in to your music" : "Create your account"}</h1>

@@ -75,10 +75,17 @@ body {
   width: 92px;
   height: 92px;
   place-items: center;
+  overflow: hidden;
   border-radius: 50%;
-  background: var(--green);
+  background: #000;
   color: #021008;
   box-shadow: 0 24px 80px rgba(30, 215, 96, 0.34);
+}
+
+.spotify-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .spin {
@@ -168,9 +175,16 @@ body {
   width: 42px;
   height: 42px;
   place-items: center;
+  overflow: hidden;
   border-radius: 50%;
-  background: var(--green);
+  background: #000;
   color: #001609;
+}
+
+.brand-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .auth-card h1 {
@@ -437,6 +451,12 @@ body {
   color: #fff;
 }
 
+.ghost-button.active {
+  border-color: rgba(30, 215, 96, 0.5);
+  background: rgba(30, 215, 96, 0.18);
+  color: var(--green);
+}
+
 .top-actions {
   position: relative;
   grid-column: 6;
@@ -560,14 +580,36 @@ body {
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(260px, 420px) minmax(0, 1fr) minmax(280px, 430px);
-  gap: 10px;
+  grid-template-columns: minmax(240px, var(--library-width, 330px)) 10px minmax(0, 1fr) minmax(280px, 430px);
   min-height: 0;
   padding: 0 10px;
 }
 
 .content-grid.details-closed {
-  grid-template-columns: minmax(260px, 420px) minmax(0, 1fr);
+  grid-template-columns: minmax(240px, var(--library-width, 330px)) 10px minmax(0, 1fr);
+}
+
+.library-resizer {
+  width: 10px;
+  min-height: 0;
+  border-radius: 999px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.library-resizer::before {
+  display: block;
+  width: 2px;
+  height: 100%;
+  margin: 0 auto;
+  border-radius: 999px;
+  background: transparent;
+  content: "";
+  transition: background 140ms ease;
+}
+
+.library-resizer:hover::before {
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .panel {
@@ -622,6 +664,11 @@ body {
   padding: 10px 16px;
 }
 
+.library-chips button.active {
+  background: #fff;
+  color: #111;
+}
+
 .hero-tabs .active {
   background: #fff;
   color: #111;
@@ -646,6 +693,16 @@ body {
   min-height: 0;
   overflow: auto;
   padding: 8px;
+}
+
+.library-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  color: var(--muted);
+  font-weight: 800;
+  padding: 8px 12px;
 }
 
 .library-item,
@@ -706,7 +763,9 @@ body {
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.32);
 }
 
-.artwork img {
+.artwork img,
+.playlist-cover img,
+.collection-playlist-art img {
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -917,6 +976,13 @@ body {
 
 .collection-view {
   padding: 36px clamp(20px, 4vw, 54px);
+}
+
+.collection-view.playlist-collection {
+  min-height: 100%;
+  background:
+    linear-gradient(180deg, var(--collection-accent-soft) 0%, rgba(18, 18, 18, 0.64) 290px, transparent 560px),
+    var(--panel);
 }
 
 .collection-header {
@@ -1207,6 +1273,11 @@ body {
   font-weight: 900;
 }
 
+.credit-row button.active {
+  border-color: rgba(30, 215, 96, 0.55);
+  color: var(--green);
+}
+
 .empty-now {
   min-height: 330px;
   padding: 20px;
@@ -1407,6 +1478,15 @@ input[type="range"]:hover {
   cursor: pointer;
 }
 
+.sr-only-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .drop-field span,
 .cover-field span {
   max-width: 100%;
@@ -1480,7 +1560,7 @@ input[type="range"]:hover {
 
 @media (max-width: 1320px) {
   .content-grid {
-    grid-template-columns: minmax(240px, 330px) minmax(0, 1fr);
+    grid-template-columns: minmax(240px, var(--library-width, 330px)) 10px minmax(0, 1fr);
   }
 
   .now-panel {
@@ -1569,6 +1649,10 @@ input[type="range"]:hover {
 
   .content-grid.details-closed {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .library-resizer {
+    display: none;
   }
 
   .library-panel {

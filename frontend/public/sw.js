@@ -1,5 +1,5 @@
-const CACHE_NAME = "spotify-clone-shell-v1";
-const SHELL_ASSETS = ["/", "/manifest.webmanifest", "/icon.svg"];
+const CACHE_NAME = "spotify-shell-v2";
+const SHELL_ASSETS = ["/", "/manifest.webmanifest", "/spotify-logo.jpeg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(

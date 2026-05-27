@@ -1,10 +1,45 @@
+import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth";
-import { ensureIndexes, getDb } from "@/lib/mongodb";
+import { fieldValue, isNonEmptyFile, uploadFileToGridFS } from "@/lib/media";
+import { ensureIndexes, getBucket, getDb } from "@/lib/mongodb";
 import { playlistToClient } from "@/lib/serializers";
 
 export const runtime = "nodejs";
+
+const hexColorPattern = /^#[0-9a-f]{6}$/i;
+
+function safeCoverColor(value: string) {
+  const color = value.trim();
+  return hexColorPattern.test(color) ? color.toLowerCase() : "";
+}
+
+async function readPlaylistPayload(request: NextRequest) {
+  const contentType = request.headers.get("content-type") || "";
+
+  if (!contentType.includes("multipart/form-data")) {
+    const body = await request.json();
+
+    return {
+      name: String(body.name || "").trim(),
+      description: String(body.description || "").trim(),
+      isPublic: Boolean(body.isPublic),
+      cover: null,
+      coverColor: safeCoverColor(String(body.coverColor || ""))
+    };
+  }
+
+  const formData = await request.formData();
+
+  return {
+    name: fieldValue(formData.get("name")),
+    description: fieldValue(formData.get("description")),
+    isPublic: fieldValue(formData.get("isPublic")) === "true",
+    cover: formData.get("cover"),
+    coverColor: safeCoverColor(fieldValue(formData.get("coverColor")))
+  };
+}
 
 export async function GET() {
   try {
@@ -32,21 +67,40 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const user = await requireUser();
-    const body = await request.json();
-    const name = String(body.name || "").trim();
-    const description = String(body.description || "").trim();
+    const payload = await readPlaylistPayload(request);
 
-    if (!name) {
+    if (!payload.name) {
       return NextResponse.json({ error: "Playlist name is required." }, { status: 400 });
     }
 
     await ensureIndexes();
     const db = await getDb();
+    const coverBucket = await getBucket("covers");
     const now = new Date();
+    let coverId: ObjectId | undefined;
+
+    if (isNonEmptyFile(payload.cover)) {
+      if (payload.cover.size > 8 * 1024 * 1024) {
+        return NextResponse.json({ error: "Cover image must be 8MB or smaller." }, { status: 413 });
+      }
+
+      if (payload.cover.type && !payload.cover.type.startsWith("image/")) {
+        return NextResponse.json({ error: "Cover file must be an image." }, { status: 400 });
+      }
+
+      coverId = await uploadFileToGridFS(coverBucket, payload.cover, {
+        kind: "playlist-cover",
+        uploadedBy: user._id,
+        uploadedAt: now
+      });
+    }
+
     const result = await db.collection("playlists").insertOne({
-      name,
-      description,
-      isPublic: Boolean(body.isPublic),
+      name: payload.name,
+      description: payload.description,
+      coverId,
+      coverColor: payload.coverColor,
+      isPublic: payload.isPublic,
       trackIds: [],
       ownerId: user._id,
       ownerName: user.name,

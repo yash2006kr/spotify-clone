@@ -2,7 +2,8 @@ import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth";
-import { getDb } from "@/lib/mongodb";
+import { fieldValue, isNonEmptyFile, uploadFileToGridFS } from "@/lib/media";
+import { getBucket, getDb } from "@/lib/mongodb";
 import { playlistToClient, trackToClient } from "@/lib/serializers";
 
 export const runtime = "nodejs";
@@ -11,6 +12,41 @@ type RouteContext = {
   params: Promise<{ id: string }>;
 };
 
+const hexColorPattern = /^#[0-9a-f]{6}$/i;
+
+function safeCoverColor(value: string) {
+  const color = value.trim();
+  return hexColorPattern.test(color) ? color.toLowerCase() : "";
+}
+
+async function readPlaylistPatch(request: NextRequest) {
+  const contentType = request.headers.get("content-type") || "";
+
+  if (!contentType.includes("multipart/form-data")) {
+    const body = await request.json();
+
+    return {
+      name: typeof body.name === "string" ? body.name.trim() : undefined,
+      description: typeof body.description === "string" ? body.description.trim() : undefined,
+      isPublic: typeof body.isPublic === "boolean" ? body.isPublic : undefined,
+      cover: null,
+      coverColor: typeof body.coverColor === "string" ? safeCoverColor(body.coverColor) : undefined
+    };
+  }
+
+  const formData = await request.formData();
+  const isPublicValue = fieldValue(formData.get("isPublic"));
+  const coverColorValue = fieldValue(formData.get("coverColor"));
+
+  return {
+    name: fieldValue(formData.get("name")) || undefined,
+    description: formData.has("description") ? fieldValue(formData.get("description")) : undefined,
+    isPublic: isPublicValue ? isPublicValue === "true" : undefined,
+    cover: formData.get("cover"),
+    coverColor: coverColorValue ? safeCoverColor(coverColorValue) : undefined
+  };
+}
+
 async function getOwnedPlaylist(id: string, userId: ObjectId) {
   if (!ObjectId.isValid(id)) {
     return null;
@@ -18,6 +54,20 @@ async function getOwnedPlaylist(id: string, userId: ObjectId) {
 
   const db = await getDb();
   return db.collection("playlists").findOne({ _id: new ObjectId(id), ownerId: userId });
+}
+
+async function deleteCoverFile(fileId: unknown) {
+  if (!(fileId instanceof ObjectId)) {
+    return;
+  }
+
+  const bucket = await getBucket("covers");
+
+  try {
+    await bucket.delete(fileId);
+  } catch {
+    // Missing GridFS files should not block playlist metadata updates.
+  }
 }
 
 export async function GET(_request: Request, context: RouteContext) {
@@ -38,9 +88,23 @@ export async function GET(_request: Request, context: RouteContext) {
           .find({ _id: { $in: trackIds } })
           .toArray()
       : [];
+    const liked = new Set<string>();
+
+    if (trackIds.length) {
+      const likes = await db
+        .collection("likes")
+        .find({
+          userId: user._id,
+          trackId: { $in: trackIds }
+        })
+        .toArray();
+
+      likes.forEach((like) => liked.add(like.trackId.toString()));
+    }
+
     const orderedTracks = trackIds.flatMap((trackId: ObjectId) => {
       const track = tracks.find((item) => item._id.equals(trackId));
-      return track ? [trackToClient(track, false)] : [];
+      return track ? [trackToClient(track, liked.has(track._id.toString()))] : [];
     });
 
     return NextResponse.json({ playlist: playlistToClient(playlist, orderedTracks) });
@@ -64,19 +128,40 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ error: "Playlist not found." }, { status: 404 });
     }
 
-    const body = await request.json();
+    const payload = await readPlaylistPatch(request);
     const update: Record<string, unknown> = { updatedAt: new Date() };
 
-    if (typeof body.name === "string" && body.name.trim()) {
-      update.name = body.name.trim();
+    if (payload.name) {
+      update.name = payload.name;
     }
 
-    if (typeof body.description === "string") {
-      update.description = body.description.trim();
+    if (typeof payload.description === "string") {
+      update.description = payload.description;
     }
 
-    if (typeof body.isPublic === "boolean") {
-      update.isPublic = body.isPublic;
+    if (typeof payload.isPublic === "boolean") {
+      update.isPublic = payload.isPublic;
+    }
+
+    if (typeof payload.coverColor === "string") {
+      update.coverColor = payload.coverColor;
+    }
+
+    if (isNonEmptyFile(payload.cover)) {
+      if (payload.cover.size > 8 * 1024 * 1024) {
+        return NextResponse.json({ error: "Cover image must be 8MB or smaller." }, { status: 413 });
+      }
+
+      if (payload.cover.type && !payload.cover.type.startsWith("image/")) {
+        return NextResponse.json({ error: "Cover file must be an image." }, { status: 400 });
+      }
+
+      const coverBucket = await getBucket("covers");
+      update.coverId = await uploadFileToGridFS(coverBucket, payload.cover, {
+        kind: "playlist-cover",
+        uploadedBy: user._id,
+        uploadedAt: new Date()
+      });
     }
 
     const db = await getDb();
@@ -85,6 +170,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     if (!next) {
       return NextResponse.json({ error: "Playlist not found." }, { status: 404 });
+    }
+
+    if (update.coverId) {
+      await deleteCoverFile(playlist.coverId);
     }
 
     return NextResponse.json({ playlist: playlistToClient(next) });

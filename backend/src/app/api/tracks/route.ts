@@ -1,7 +1,7 @@
 import { ObjectId } from "mongodb";
 import { NextRequest, NextResponse } from "next/server";
 
-import { getCurrentUser, requireUser, type UserDocument } from "@/lib/auth";
+import { getCurrentUser, requireUser } from "@/lib/auth";
 import { fieldValue, filenameWithoutExtension, isNonEmptyFile, numberField, uploadFileToGridFS } from "@/lib/media";
 import { ensureIndexes, getBucket, getDb } from "@/lib/mongodb";
 import { trackToClient } from "@/lib/serializers";
@@ -79,6 +79,22 @@ export async function POST(request: NextRequest) {
     const album = fieldValue(formData.get("album"), "Single") || "Single";
     const genre = fieldValue(formData.get("genre"), "Uploaded") || "Uploaded";
     const duration = Math.max(0, numberField(formData.get("duration")));
+    const playlistId = fieldValue(formData.get("playlistId"));
+    let playlistObjectId: ObjectId | null = null;
+
+    if (playlistId) {
+      if (!ObjectId.isValid(playlistId)) {
+        return NextResponse.json({ error: "Playlist not found." }, { status: 404 });
+      }
+
+      playlistObjectId = new ObjectId(playlistId);
+      const playlist = await db.collection("playlists").findOne({ _id: playlistObjectId, ownerId: user._id });
+
+      if (!playlist) {
+        return NextResponse.json({ error: "Playlist not found." }, { status: 404 });
+      }
+    }
+
     const fileId = await uploadFileToGridFS(audioBucket, audio, {
       kind: "audio",
       uploadedBy: user._id,
@@ -124,6 +140,16 @@ export async function POST(request: NextRequest) {
 
     if (!track) {
       return NextResponse.json({ error: "Unable to save uploaded track." }, { status: 500 });
+    }
+
+    if (playlistObjectId) {
+      await db.collection("playlists").updateOne(
+        { _id: playlistObjectId, ownerId: user._id },
+        {
+          $addToSet: { trackIds: track._id },
+          $set: { updatedAt: new Date() }
+        }
+      );
     }
 
     return NextResponse.json({ track: trackToClient(track, false) }, { status: 201 });

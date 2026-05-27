@@ -1,6 +1,6 @@
 {
-  "name": "Spotify Clone",
-  "short_name": "Spotify Clone",
+  "name": "spotify",
+  "short_name": "spotify",
   "description": "Installable Spotify-style music player for Android and desktop browsers.",
   "start_url": "/",
   "scope": "/",
@@ -11,9 +11,9 @@
   "categories": ["music", "entertainment"],
   "icons": [
     {
-      "src": "/icon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
+      "src": "/spotify-logo.jpeg",
+      "sizes": "225x225",
+      "type": "image/jpeg",
       "purpose": "any maskable"
     }
   ]

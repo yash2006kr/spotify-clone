@@ -2,8 +2,10 @@
 
 import {
   ChangeEvent,
+  CSSProperties,
   FormEvent,
   MouseEvent,
+  PointerEvent as ReactPointerEvent,
   useCallback,
   useEffect,
   useMemo,
@@ -46,7 +48,17 @@ import { AuthScreen } from "@/components/AuthScreen";
 import { apiFetch, mediaUrl } from "@/lib/api";
 import type { AppUser, Playlist, Track } from "@/types";
 
-type ViewState = "home" | "liked" | "songs" | "podcasts" | "recent" | "most" | `playlist:${string}`;
+type ViewState =
+  | "home"
+  | "liked"
+  | "songs"
+  | "podcasts"
+  | "recent"
+  | "most"
+  | `playlist:${string}`
+  | `album:${string}`
+  | `artist:${string}`;
+type LibraryFilter = "all" | "playlists" | "albums" | "artists";
 type RepeatMode = "off" | "all" | "one";
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -63,6 +75,7 @@ const gradients = [
   "linear-gradient(135deg, #f96d00 0%, #f2f2f2 45%, #222 100%)",
   "linear-gradient(135deg, #86efac 0%, #1d4ed8 100%)"
 ];
+const spotifyLogoSrc = "/spotify-logo.jpeg";
 
 function hashValue(value: string) {
   return value.split("").reduce((total, char) => total + char.charCodeAt(0), 0);
@@ -70,6 +83,37 @@ function hashValue(value: string) {
 
 function gradientFor(id: string) {
   return gradients[hashValue(id) % gradients.length];
+}
+
+function collectionView(kind: "album" | "artist", value: string): ViewState {
+  return `${kind}:${encodeURIComponent(value)}` as ViewState;
+}
+
+function collectionValue(view: ViewState, kind: "album" | "artist") {
+  const prefix = `${kind}:`;
+
+  if (!view.startsWith(prefix)) {
+    return "";
+  }
+
+  return decodeURIComponent(view.slice(prefix.length));
+}
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function safeHexColor(color: string | null | undefined, fallback = "#1ed760") {
+  return /^#[0-9a-f]{6}$/i.test(color || "") ? color!.toLowerCase() : fallback;
+}
+
+function hexToRgba(color: string, alpha: number) {
+  const safeColor = safeHexColor(color).slice(1);
+  const red = Number.parseInt(safeColor.slice(0, 2), 16);
+  const green = Number.parseInt(safeColor.slice(2, 4), 16);
+  const blue = Number.parseInt(safeColor.slice(4, 6), 16);
+
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
 }
 
 function formatTime(seconds: number) {
@@ -113,6 +157,79 @@ function shuffledTracks(tracks: Track[]) {
   return shuffled;
 }
 
+function extractDominantColor(file: File) {
+  return new Promise<string>((resolve) => {
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    image.onload = () => {
+      const canvas = document.createElement("canvas");
+      const size = 40;
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext("2d", { willReadFrequently: true });
+
+      if (!context) {
+        URL.revokeObjectURL(objectUrl);
+        resolve("#1ed760");
+        return;
+      }
+
+      context.drawImage(image, 0, 0, size, size);
+      const { data } = context.getImageData(0, 0, size, size);
+      let red = 0;
+      let green = 0;
+      let blue = 0;
+      let count = 0;
+
+      for (let index = 0; index < data.length; index += 4) {
+        const alpha = data[index + 3];
+        const brightness = (data[index] + data[index + 1] + data[index + 2]) / 3;
+
+        if (alpha < 128 || brightness < 34) {
+          continue;
+        }
+
+        red += data[index];
+        green += data[index + 1];
+        blue += data[index + 2];
+        count += 1;
+      }
+
+      URL.revokeObjectURL(objectUrl);
+
+      if (!count) {
+        resolve("#1ed760");
+        return;
+      }
+
+      const toHex = (value: number) => Math.round(value / count).toString(16).padStart(2, "0");
+      resolve(`#${toHex(red)}${toHex(green)}${toHex(blue)}`);
+    };
+
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      resolve("#1ed760");
+    };
+
+    image.src = objectUrl;
+  });
+}
+
+function loadFollowedArtists(userId: string) {
+  if (typeof window === "undefined") {
+    return new Set<string>();
+  }
+
+  try {
+    const saved = window.localStorage.getItem(`spotify:followed-artists:${userId}`);
+    const names = saved ? (JSON.parse(saved) as string[]) : [];
+    return new Set(names.filter((name) => typeof name === "string"));
+  } catch {
+    return new Set<string>();
+  }
+}
+
 type ArtworkProps = {
   track?: Track | null;
   size?: "sm" | "md" | "lg" | "hero";
@@ -132,6 +249,39 @@ function Artwork({ track, size = "md", circle = false, liked = false }: ArtworkP
         <Heart fill="currentColor" size={size === "hero" ? 74 : 26} />
       ) : (
         <Music2 size={size === "hero" ? 74 : 26} />
+      )}
+    </div>
+  );
+}
+
+function SpotifyLogo({ className = "" }: { className?: string }) {
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img alt="" className={`spotify-logo ${className}`} src={spotifyLogoSrc} />;
+}
+
+type PlaylistArtworkProps = {
+  add?: boolean;
+  hero?: boolean;
+  playlist?: Playlist | null;
+};
+
+function PlaylistArtwork({ add = false, hero = false, playlist }: PlaylistArtworkProps) {
+  const color = safeHexColor(playlist?.coverColor, "#1ed760");
+  const style = {
+    background: add
+      ? "linear-gradient(135deg, #1ed760, #095a2e)"
+      : `linear-gradient(135deg, ${hexToRgba(color, 0.95)}, ${hexToRgba(color, 0.26)} 52%, #141414)`
+  };
+
+  return (
+    <div className={`${hero ? "collection-playlist-art" : "playlist-cover"} ${add ? "add-cover" : ""}`} style={style}>
+      {playlist?.coverUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img alt="" src={mediaUrl(playlist.coverUrl) || ""} />
+      ) : add ? (
+        <Upload size={hero ? 72 : 24} />
+      ) : (
+        <ListMusic size={hero ? 72 : 24} />
       )}
     </div>
   );
@@ -165,11 +315,15 @@ export function SpotifyApp() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const uploadFileRef = useRef<HTMLInputElement | null>(null);
   const coverFileRef = useRef<HTMLInputElement | null>(null);
+  const playlistCoverFileRef = useRef<HTMLInputElement | null>(null);
+  const selectedPlaylistCoverFileRef = useRef<HTMLInputElement | null>(null);
   const [booting, setBooting] = useState(true);
+  const [libraryLoading, setLibraryLoading] = useState(false);
   const [user, setUser] = useState<AppUser | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [view, setView] = useState<ViewState>("home");
+  const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<Track[] | null>(null);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -184,8 +338,11 @@ export function SpotifyApp() {
   const [currentTime, setCurrentTime] = useState(0);
   const [loadedDuration, setLoadedDuration] = useState(0);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [uploadTargetPlaylistId, setUploadTargetPlaylistId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [playlistOpen, setPlaylistOpen] = useState(false);
+  const [playlistSaving, setPlaylistSaving] = useState(false);
+  const [playlistCoverSaving, setPlaylistCoverSaving] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
@@ -197,6 +354,14 @@ export function SpotifyApp() {
     () => typeof window !== "undefined" && window.matchMedia?.("(display-mode: standalone)").matches
   );
   const [toast, setToast] = useState("");
+  const [libraryWidth, setLibraryWidth] = useState(() => {
+    if (typeof window === "undefined") {
+      return 330;
+    }
+
+    return clamp(Number(window.localStorage.getItem("spotify:library-width")) || 330, 240, 520);
+  });
+  const [followedArtists, setFollowedArtists] = useState<Set<string>>(() => new Set());
   const [uploadForm, setUploadForm] = useState({
     title: "",
     artist: "",
@@ -208,7 +373,9 @@ export function SpotifyApp() {
   });
   const [playlistForm, setPlaylistForm] = useState({
     name: "",
-    description: ""
+    description: "",
+    coverName: "",
+    coverColor: "#1ed760"
   });
 
   const showToast = useCallback((message: string) => {
@@ -216,20 +383,36 @@ export function SpotifyApp() {
     window.setTimeout(() => setToast(""), 2600);
   }, []);
 
+  const openUpload = useCallback((playlistId?: string | null) => {
+    setUploadTargetPlaylistId(playlistId || null);
+    setUploadOpen(true);
+  }, []);
+
+  const closeUpload = useCallback(() => {
+    setUploadOpen(false);
+    setUploadTargetPlaylistId(null);
+  }, []);
+
   const loadLibrary = useCallback(async () => {
-    const [trackResult, playlistResult] = await Promise.all([
-      apiFetch("/api/tracks", { cache: "no-store" }),
-      apiFetch("/api/playlists", { cache: "no-store" })
-    ]);
+    setLibraryLoading(true);
 
-    if (trackResult.ok) {
-      const data = await trackResult.json();
-      setTracks(data.tracks || []);
-    }
+    try {
+      const [trackResult, playlistResult] = await Promise.all([
+        apiFetch("/api/tracks", { cache: "no-store" }),
+        apiFetch("/api/playlists", { cache: "no-store" })
+      ]);
 
-    if (playlistResult.ok) {
-      const data = await playlistResult.json();
-      setPlaylists(data.playlists || []);
+      if (trackResult.ok) {
+        const data = await trackResult.json();
+        setTracks(data.tracks || []);
+      }
+
+      if (playlistResult.ok) {
+        const data = await playlistResult.json();
+        setPlaylists(data.playlists || []);
+      }
+    } finally {
+      setLibraryLoading(false);
     }
   }, []);
 
@@ -269,10 +452,12 @@ export function SpotifyApp() {
 
         if (result.ok) {
           const data = await result.json();
+          setFollowedArtists(loadFollowedArtists(data.user.id));
           setUser(data.user);
-          await loadLibrary();
+          loadLibrary().catch(() => showToast("Could not refresh the library."));
         }
       })
+      .catch(() => undefined)
       .finally(() => {
         if (active) {
           setBooting(false);
@@ -282,7 +467,11 @@ export function SpotifyApp() {
     return () => {
       active = false;
     };
-  }, [loadLibrary]);
+  }, [loadLibrary, showToast]);
+
+  useEffect(() => {
+    window.localStorage.setItem("spotify:library-width", String(libraryWidth));
+  }, [libraryWidth]);
 
   useEffect(() => {
     if (audioRef.current) {
@@ -378,6 +567,8 @@ export function SpotifyApp() {
   }, [search, user]);
 
   const selectedPlaylistId = view.startsWith("playlist:") ? view.slice("playlist:".length) : "";
+  const selectedAlbumName = collectionValue(view, "album");
+  const selectedArtistName = collectionValue(view, "artist");
 
   const selectedPlaylist = useMemo(() => {
     if (!selectedPlaylistId) {
@@ -435,6 +626,38 @@ export function SpotifyApp() {
   }, [selectedPlaylist, tracks]);
 
   const allTracks = useMemo(() => newestFirst(tracks), [tracks]);
+  const selectedAlbumTracks = useMemo(
+    () => (selectedAlbumName ? allTracks.filter((track) => track.album === selectedAlbumName) : []),
+    [allTracks, selectedAlbumName]
+  );
+  const selectedArtistTracks = useMemo(
+    () => (selectedArtistName ? allTracks.filter((track) => track.artist === selectedArtistName) : []),
+    [allTracks, selectedArtistName]
+  );
+  const libraryAlbums = useMemo(() => {
+    const albums = new Map<string, Track[]>();
+
+    allTracks.forEach((track) => {
+      const album = track.album || "Single";
+      albums.set(album, [...(albums.get(album) || []), track]);
+    });
+
+    return [...albums.entries()]
+      .map(([name, albumTracks]) => ({ name, tracks: albumTracks, cover: albumTracks[0] }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }, [allTracks]);
+  const libraryArtists = useMemo(() => {
+    const artists = new Map<string, Track[]>();
+
+    allTracks.forEach((track) => {
+      const artist = track.artist || "Unknown Artist";
+      artists.set(artist, [...(artists.get(artist) || []), track]);
+    });
+
+    return [...artists.entries()]
+      .map(([name, artistTracks]) => ({ name, tracks: artistTracks, cover: artistTracks[0] }))
+      .sort((left, right) => left.name.localeCompare(right.name));
+  }, [allTracks]);
   const podcastTracks = useMemo(() => allTracks.filter(isPodcastTrack), [allTracks]);
   const searchTracks = search.trim() ? searchResults ?? filteredTracks : filteredTracks;
   const allTopTracks = useMemo(() => [...tracks].sort((a, b) => b.plays - a.plays), [tracks]);
@@ -468,6 +691,14 @@ export function SpotifyApp() {
       return selectedPlaylistTracks;
     }
 
+    if (selectedAlbumName) {
+      return selectedAlbumTracks;
+    }
+
+    if (selectedArtistName) {
+      return selectedArtistTracks;
+    }
+
     return filteredTracks;
   }, [
     allTopTracks,
@@ -477,6 +708,10 @@ export function SpotifyApp() {
     podcastTracks,
     search,
     searchTracks,
+    selectedAlbumName,
+    selectedAlbumTracks,
+    selectedArtistName,
+    selectedArtistTracks,
     selectedPlaylist,
     selectedPlaylistTracks,
     view
@@ -499,6 +734,12 @@ export function SpotifyApp() {
 
   const updateTrackEverywhere = useCallback((trackId: string, update: (track: Track) => Track) => {
     setTracks((existing) => existing.map((track) => (track.id === trackId ? update(track) : track)));
+    setPlaylists((existing) =>
+      existing.map((playlist) => ({
+        ...playlist,
+        tracks: playlist.tracks?.map((track) => (track.id === trackId ? update(track) : track))
+      }))
+    );
     setPlaybackList((existing) => existing.map((track) => (track.id === trackId ? update(track) : track)));
     setManualQueue((existing) => existing.map((track) => (track.id === trackId ? update(track) : track)));
     setCurrentTrack((track) => (track?.id === trackId ? update(track) : track));
@@ -644,9 +885,9 @@ export function SpotifyApp() {
       album: currentTrack.album,
       artwork: [
         {
-          src: mediaUrl(currentTrack.coverUrl) || "/icon.svg",
+          src: mediaUrl(currentTrack.coverUrl) || spotifyLogoSrc,
           sizes: currentTrack.coverUrl ? "512x512" : "any",
-          type: currentTrack.coverUrl ? "image/jpeg" : "image/svg+xml"
+          type: "image/jpeg"
         }
       ]
     });
@@ -797,7 +1038,11 @@ export function SpotifyApp() {
       setPlaylists((existing) =>
         existing.map((playlist) =>
           playlist.id === playlistId && !playlist.trackIds.includes(track.id)
-            ? { ...playlist, trackIds: [...playlist.trackIds, track.id] }
+            ? {
+                ...playlist,
+                trackIds: [...playlist.trackIds, track.id],
+                tracks: playlist.tracks ? uniqueTracks([...playlist.tracks, track]) : playlist.tracks
+              }
             : playlist
         )
       );
@@ -826,10 +1071,15 @@ export function SpotifyApp() {
       setPlaylists((existing) =>
         existing.map((playlist) =>
           playlist.id === selectedPlaylist.id
-            ? { ...playlist, trackIds: playlist.trackIds.filter((id) => id !== track.id) }
+            ? {
+                ...playlist,
+                trackIds: playlist.trackIds.filter((id) => id !== track.id),
+                tracks: playlist.tracks?.filter((item) => item.id !== track.id)
+              }
             : playlist
         )
       );
+      showToast(`Removed "${track.title}" from ${selectedPlaylist.name}.`);
     },
     [selectedPlaylist, showToast]
   );
@@ -837,6 +1087,64 @@ export function SpotifyApp() {
   const canDeleteTrack = useCallback(
     (track: Track) => Boolean(user && (!track.uploadedById || track.uploadedById === user.id)),
     [user]
+  );
+
+  const beginLibraryResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = libraryWidth;
+      const previousCursor = document.body.style.cursor;
+      const previousUserSelect = document.body.style.userSelect;
+
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        setLibraryWidth(clamp(startWidth + moveEvent.clientX - startX, 240, 520));
+      };
+
+      const handlePointerUp = () => {
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousUserSelect;
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+      };
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp, { once: true });
+    },
+    [libraryWidth]
+  );
+
+  const toggleFollow = useCallback(
+    (artistName: string) => {
+      const name = artistName.trim();
+
+      if (!name || !user) {
+        return;
+      }
+
+      const key = name.toLowerCase();
+      const next = new Set(followedArtists);
+      const wasFollowing = next.has(key);
+
+      if (wasFollowing) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+
+      setFollowedArtists(next);
+      window.localStorage.setItem(`spotify:followed-artists:${user.id}`, JSON.stringify([...next]));
+      showToast(wasFollowing ? `Unfollowed ${name}.` : `Following ${name}.`);
+    },
+    [followedArtists, showToast, user]
+  );
+
+  const isFollowing = useCallback(
+    (artistName: string) => followedArtists.has(artistName.trim().toLowerCase()),
+    [followedArtists]
   );
 
   async function handleLogout() {
@@ -850,6 +1158,9 @@ export function SpotifyApp() {
     setSearch("");
     setSearchResults(null);
     setSearchLoading(false);
+    setLibraryFilter("all");
+    setUploadTargetPlaylistId(null);
+    setFollowedArtists(new Set());
     setProfileOpen(false);
     setQueueOpen(false);
   }
@@ -871,7 +1182,7 @@ export function SpotifyApp() {
 
     if (choice.outcome === "accepted") {
       setIsInstalled(true);
-      showToast("Spotify Clone installed.");
+      showToast("spotify installed.");
     } else {
       showToast("Install dismissed.");
     }
@@ -884,22 +1195,43 @@ export function SpotifyApp() {
       return;
     }
 
-    const result = await apiFetch("/api/playlists", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(playlistForm)
-    });
-    const data = await result.json();
+    const formData = new FormData();
+    formData.append("name", playlistForm.name);
+    formData.append("description", playlistForm.description);
+    formData.append("coverColor", playlistForm.coverColor);
 
-    if (!result.ok) {
-      showToast(data.error || "Could not create playlist.");
-      return;
+    const cover = playlistCoverFileRef.current?.files?.[0];
+
+    if (cover) {
+      formData.append("cover", cover);
     }
 
-    setPlaylists((existing) => [data.playlist, ...existing]);
-    setPlaylistOpen(false);
-    setPlaylistForm({ name: "", description: "" });
-    setView(`playlist:${data.playlist.id}`);
+    setPlaylistSaving(true);
+
+    try {
+      const result = await apiFetch("/api/playlists", {
+        method: "POST",
+        body: formData
+      });
+      const data = await result.json();
+
+      if (!result.ok) {
+        showToast(data.error || "Could not create playlist.");
+        return;
+      }
+
+      setPlaylists((existing) => [data.playlist, ...existing]);
+      setPlaylistOpen(false);
+      setPlaylistForm({ name: "", description: "", coverName: "", coverColor: "#1ed760" });
+      if (playlistCoverFileRef.current) {
+        playlistCoverFileRef.current.value = "";
+      }
+      setView(`playlist:${data.playlist.id}`);
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setPlaylistSaving(false);
+    }
   }
 
   function handleAudioFileChange(event: ChangeEvent<HTMLInputElement>) {
@@ -935,6 +1267,60 @@ export function SpotifyApp() {
     }
   }
 
+  function handlePlaylistCoverFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    setPlaylistForm((existing) => ({ ...existing, coverName: file.name }));
+    extractDominantColor(file).then((coverColor) =>
+      setPlaylistForm((existing) => ({ ...existing, coverColor }))
+    );
+  }
+
+  async function handleSelectedPlaylistCoverChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file || !selectedPlaylist) {
+      return;
+    }
+
+    setPlaylistCoverSaving(true);
+
+    try {
+      const coverColor = await extractDominantColor(file);
+      const formData = new FormData();
+      formData.append("cover", file);
+      formData.append("coverColor", coverColor);
+
+      const result = await apiFetch(`/api/playlists/${selectedPlaylist.id}`, {
+        method: "PATCH",
+        body: formData
+      });
+      const data = await result.json();
+
+      if (!result.ok) {
+        throw new Error(data.error || "Could not update playlist cover.");
+      }
+
+      setPlaylists((existing) =>
+        existing.map((playlist) =>
+          playlist.id === data.playlist.id ? { ...playlist, ...data.playlist } : playlist
+        )
+      );
+      showToast("Playlist cover updated.");
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setPlaylistCoverSaving(false);
+      if (selectedPlaylistCoverFileRef.current) {
+        selectedPlaylistCoverFileRef.current.value = "";
+      }
+    }
+  }
+
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const audio = uploadFileRef.current?.files?.[0];
@@ -950,6 +1336,10 @@ export function SpotifyApp() {
 
     if (cover) {
       formData.append("cover", cover);
+    }
+
+    if (uploadTargetPlaylistId) {
+      formData.append("playlistId", uploadTargetPlaylistId);
     }
 
     Object.entries(uploadForm).forEach(([key, value]) => {
@@ -971,8 +1361,23 @@ export function SpotifyApp() {
         throw new Error(data.error || "Upload failed.");
       }
 
-      setTracks((existing) => [data.track, ...existing]);
-      setUploadOpen(false);
+      setTracks((existing) => uniqueTracks([data.track, ...existing]));
+
+      if (uploadTargetPlaylistId) {
+        setPlaylists((existing) =>
+          existing.map((playlist) =>
+            playlist.id === uploadTargetPlaylistId && !playlist.trackIds.includes(data.track.id)
+              ? {
+                  ...playlist,
+                  trackIds: [...playlist.trackIds, data.track.id],
+                  tracks: playlist.tracks ? uniqueTracks([...playlist.tracks, data.track]) : playlist.tracks
+                }
+              : playlist
+          )
+        );
+      }
+
+      closeUpload();
       setUploadForm({
         title: "",
         artist: "",
@@ -991,7 +1396,7 @@ export function SpotifyApp() {
         coverFileRef.current.value = "";
       }
 
-      showToast("Song uploaded to MongoDB.");
+      showToast(uploadTargetPlaylistId ? "Song uploaded and added to this playlist." : "Song uploaded to MongoDB.");
     } catch (error) {
       showToast((error as Error).message);
     } finally {
@@ -1007,7 +1412,7 @@ export function SpotifyApp() {
     return (
       <main className="splash-screen">
         <div className="splash-mark">
-          <Music2 size={42} />
+          <SpotifyLogo />
         </div>
         <Loader2 className="spin" size={28} />
       </main>
@@ -1018,6 +1423,7 @@ export function SpotifyApp() {
     return (
       <AuthScreen
         onAuthenticated={(nextUser) => {
+          setFollowedArtists(loadFollowedArtists(nextUser.id));
           setUser(nextUser);
           loadLibrary().catch(() => showToast("Could not refresh the library."));
         }}
@@ -1039,6 +1445,10 @@ export function SpotifyApp() {
               ? "Most played"
               : selectedPlaylist
                 ? selectedPlaylist.name
+                : selectedAlbumName
+                  ? selectedAlbumName
+                  : selectedArtistName
+                    ? selectedArtistName
                 : "Home";
   const activeSubtitle = search
     ? searchLoading
@@ -1056,8 +1466,29 @@ export function SpotifyApp() {
               ? `${allTopTracks.length} songs sorted by play count`
               : selectedPlaylist
                 ? `${selectedPlaylist.trackIds.length} songs by ${selectedPlaylist.ownerName}`
+                : selectedAlbumName
+                  ? `${selectedAlbumTracks.length} ${selectedAlbumTracks.length === 1 ? "song" : "songs"} from this album`
+                  : selectedArtistName
+                    ? `${selectedArtistTracks.length} ${selectedArtistTracks.length === 1 ? "song" : "songs"} by this artist`
                 : `${tracks.length} songs uploaded by the community`;
-  const activeKicker = search ? "Search" : selectedPlaylist || view === "liked" ? "Playlist" : "Collection";
+  const activeKicker = search
+    ? "Search"
+    : selectedPlaylist || view === "liked"
+      ? "Playlist"
+      : selectedAlbumName
+        ? "Album"
+        : selectedArtistName
+          ? "Artist"
+          : "Collection";
+  const collectionCoverTrack = selectedAlbumTracks[0] || selectedArtistTracks[0] || null;
+  const collectionAccent = safeHexColor(selectedPlaylist?.coverColor, "#1ed760");
+  const collectionStyle = selectedPlaylist
+    ? ({
+        "--collection-accent": collectionAccent,
+        "--collection-accent-soft": hexToRgba(collectionAccent, 0.38)
+      } as CSSProperties)
+    : undefined;
+  const gridStyle = { "--library-width": `${libraryWidth}px` } as CSSProperties;
 
   return (
     <main className="spotify-shell">
@@ -1108,7 +1539,7 @@ export function SpotifyApp() {
           />
         </label>
 
-        <button className="upload-top-button" onClick={() => setUploadOpen(true)} type="button">
+        <button className="upload-top-button" onClick={() => openUpload(selectedPlaylist?.id)} type="button">
           <Upload size={18} />
           Add songs
         </button>
@@ -1186,7 +1617,7 @@ export function SpotifyApp() {
                 <Download size={18} />
                 Install Android app
               </button>
-              <button onClick={() => setUploadOpen(true)} role="menuitem" type="button">
+              <button onClick={() => openUpload(selectedPlaylist?.id)} role="menuitem" type="button">
                 <Upload size={18} />
                 Upload song
               </button>
@@ -1206,7 +1637,7 @@ export function SpotifyApp() {
         </div>
       </header>
 
-      <section className={`content-grid ${detailsOpen ? "" : "details-closed"}`}>
+      <section className={`content-grid ${detailsOpen ? "" : "details-closed"}`} style={gridStyle}>
         <aside className="library-panel panel">
           <div className="panel-header">
             <div className="panel-title">
@@ -1217,65 +1648,145 @@ export function SpotifyApp() {
               <IconButton label="Create playlist" onClick={() => setPlaylistOpen(true)}>
                 <Plus size={22} />
               </IconButton>
-              <IconButton label="Expand library">
+              <IconButton
+                label="Expand library"
+                onClick={() => setLibraryWidth((width) => (width < 420 ? 520 : 330))}
+              >
                 <Maximize2 size={17} />
               </IconButton>
             </div>
           </div>
 
           <div className="library-chips">
-            <button type="button" onClick={() => setPlaylistOpen(true)}>Playlists</button>
-            <button type="button" onClick={() => setView("home")}>Albums</button>
-            <button type="button" onClick={() => setView("home")}>Artists</button>
+            <button
+              className={libraryFilter === "playlists" ? "active" : ""}
+              type="button"
+              onClick={() => setLibraryFilter((filter) => (filter === "playlists" ? "all" : "playlists"))}
+            >
+              Playlists
+            </button>
+            <button
+              className={libraryFilter === "albums" ? "active" : ""}
+              type="button"
+              onClick={() => setLibraryFilter((filter) => (filter === "albums" ? "all" : "albums"))}
+            >
+              Albums
+            </button>
+            <button
+              className={libraryFilter === "artists" ? "active" : ""}
+              type="button"
+              onClick={() => setLibraryFilter((filter) => (filter === "artists" ? "all" : "artists"))}
+            >
+              Artists
+            </button>
           </div>
 
           <div className="library-subbar">
             <Search size={21} />
-            <span>Recent</span>
+            <span>
+              {libraryFilter === "all"
+                ? "Recent"
+                : libraryFilter.slice(0, 1).toUpperCase() + libraryFilter.slice(1)}
+            </span>
             <ListMusic size={20} />
           </div>
 
           <div className="library-list">
-            <button
-              className={`library-item ${view === "liked" ? "selected" : ""}`}
-              onClick={() => setView("liked")}
-              type="button"
-            >
-              <Artwork liked size="sm" />
-              <span>
-                <strong>Liked Songs</strong>
-                <small>Playlist · {likedTracks.length} songs</small>
-              </span>
-            </button>
-
-            {playlists.map((playlist) => (
+            {(libraryFilter === "all" || libraryFilter === "playlists") && (
               <button
-                className={`library-item ${view === `playlist:${playlist.id}` ? "selected" : ""}`}
-                key={playlist.id}
-                onClick={() => setView(`playlist:${playlist.id}`)}
+                className={`library-item ${view === "liked" ? "selected" : ""}`}
+                onClick={() => setView("liked")}
                 type="button"
               >
-                <div className="playlist-cover">
-                  <ListMusic size={24} />
-                </div>
+                <Artwork liked size="sm" />
                 <span>
-                  <strong>{playlist.name}</strong>
-                  <small>Playlist · {playlist.trackIds.length} songs</small>
+                  <strong>Liked Songs</strong>
+                  <small>Playlist · {likedTracks.length} songs</small>
                 </span>
               </button>
-            ))}
+            )}
 
-            {recentTracks.map((track) => (
-              <button className="library-item" key={track.id} onClick={() => playTrack(track, recentTracks)} type="button">
-                <Artwork track={track} size="sm" />
-                <span>
-                  <strong>{track.title}</strong>
-                  <small>{track.artist}</small>
-                </span>
-              </button>
-            ))}
+            {(libraryFilter === "all" || libraryFilter === "playlists") &&
+              playlists.map((playlist) => (
+                <button
+                  className={`library-item ${view === `playlist:${playlist.id}` ? "selected" : ""}`}
+                  key={playlist.id}
+                  onClick={() => setView(`playlist:${playlist.id}`)}
+                  type="button"
+                >
+                  <PlaylistArtwork playlist={playlist} />
+                  <span>
+                    <strong>{playlist.name}</strong>
+                    <small>Playlist · {playlist.trackIds.length} songs</small>
+                  </span>
+                </button>
+              ))}
+
+            {libraryFilter === "albums" &&
+              libraryAlbums.map((album) => (
+                <button
+                  className={`library-item ${selectedAlbumName === album.name ? "selected" : ""}`}
+                  key={album.name}
+                  onClick={() => setView(collectionView("album", album.name))}
+                  type="button"
+                >
+                  <Artwork track={album.cover} size="sm" />
+                  <span>
+                    <strong>{album.name}</strong>
+                    <small>Album · {album.tracks.length} songs</small>
+                  </span>
+                </button>
+              ))}
+
+            {libraryFilter === "artists" &&
+              libraryArtists.map((artist) => (
+                <button
+                  className={`library-item ${selectedArtistName === artist.name ? "selected" : ""}`}
+                  key={artist.name}
+                  onClick={() => setView(collectionView("artist", artist.name))}
+                  type="button"
+                >
+                  <Artwork circle track={artist.cover} size="sm" />
+                  <span>
+                    <strong>{artist.name}</strong>
+                    <small>{isFollowing(artist.name) ? "Following" : "Artist"} · {artist.tracks.length} songs</small>
+                  </span>
+                </button>
+              ))}
+
+            {libraryFilter === "all" &&
+              recentTracks.map((track) => (
+                <button
+                  className="library-item"
+                  key={track.id}
+                  onClick={() => playTrack(track, recentTracks)}
+                  type="button"
+                >
+                  <Artwork track={track} size="sm" />
+                  <span>
+                    <strong>{track.title}</strong>
+                    <small>{track.artist}</small>
+                  </span>
+                </button>
+              ))}
+
+            {libraryLoading && (
+              <div className="library-empty">
+                <Loader2 className="spin" size={20} />
+                <span>Loading library</span>
+              </div>
+            )}
           </div>
         </aside>
+
+        <div
+          aria-label="Resize library"
+          aria-orientation="vertical"
+          className="library-resizer"
+          onPointerDown={beginLibraryResize}
+          role="separator"
+          title="Resize library"
+        />
 
         <section className="main-panel panel">
           <div className="hero-band">
@@ -1324,10 +1835,8 @@ export function SpotifyApp() {
                 <span>Liked Songs</span>
               </button>
 
-              <button className="quick-tile" onClick={() => setUploadOpen(true)} type="button">
-                <div className="playlist-cover add-cover">
-                  <Upload size={24} />
-                </div>
+              <button className="quick-tile" onClick={() => openUpload()} type="button">
+                <PlaylistArtwork add />
                 <span>Add songs</span>
               </button>
 
@@ -1338,9 +1847,7 @@ export function SpotifyApp() {
                   onClick={() => setView(`playlist:${playlist.id}`)}
                   type="button"
                 >
-                  <div className="playlist-cover">
-                    <ListMusic size={24} />
-                  </div>
+                  <PlaylistArtwork playlist={playlist} />
                   <span>{playlist.name}</span>
                 </button>
               ))}
@@ -1362,6 +1869,8 @@ export function SpotifyApp() {
                 onPlay={playTrack}
                 onQueue={addToQueue}
                 onLike={toggleLike}
+                onDelete={deleteTrack}
+                canDeleteTrack={canDeleteTrack}
                 onShowAll={() => setView("songs")}
               />
               <Shelf
@@ -1370,6 +1879,8 @@ export function SpotifyApp() {
                 onPlay={playTrack}
                 onQueue={addToQueue}
                 onLike={toggleLike}
+                onDelete={deleteTrack}
+                canDeleteTrack={canDeleteTrack}
                 onShowAll={() => setView("recent")}
               />
               <Shelf
@@ -1378,18 +1889,23 @@ export function SpotifyApp() {
                 onPlay={playTrack}
                 onQueue={addToQueue}
                 onLike={toggleLike}
+                onDelete={deleteTrack}
+                canDeleteTrack={canDeleteTrack}
                 onShowAll={() => setView("most")}
               />
             </>
           ) : (
-            <section className="collection-view">
+            <section
+              className={`collection-view ${selectedPlaylist ? "playlist-collection" : ""}`}
+              style={collectionStyle}
+            >
               <div className="collection-header">
                 {view === "liked" ? (
                   <Artwork liked size="hero" />
                 ) : selectedPlaylist ? (
-                  <div className="collection-playlist-art">
-                    <ListMusic size={72} />
-                  </div>
+                  <PlaylistArtwork hero playlist={selectedPlaylist} />
+                ) : selectedAlbumName || selectedArtistName ? (
+                  <Artwork circle={Boolean(selectedArtistName)} track={collectionCoverTrack} size="hero" />
                 ) : (
                   <div className="collection-playlist-art">
                     <Search size={72} />
@@ -1420,9 +1936,37 @@ export function SpotifyApp() {
                       <Shuffle size={22} />
                     </IconButton>
                     {selectedPlaylist && (
-                      <button className="ghost-button" onClick={() => setUploadOpen(true)} type="button">
-                        <Upload size={17} />
-                        Add songs
+                      <>
+                        <button className="ghost-button" onClick={() => openUpload(selectedPlaylist.id)} type="button">
+                          <Upload size={17} />
+                          Add songs
+                        </button>
+                        <button
+                          className="ghost-button"
+                          disabled={playlistCoverSaving}
+                          onClick={() => selectedPlaylistCoverFileRef.current?.click()}
+                          type="button"
+                        >
+                          {playlistCoverSaving ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
+                          Cover
+                        </button>
+                        <input
+                          accept="image/*"
+                          className="sr-only-file"
+                          onChange={handleSelectedPlaylistCoverChange}
+                          ref={selectedPlaylistCoverFileRef}
+                          type="file"
+                        />
+                      </>
+                    )}
+                    {selectedArtistName && (
+                      <button
+                        className={`ghost-button ${isFollowing(selectedArtistName) ? "active" : ""}`}
+                        onClick={() => toggleFollow(selectedArtistName)}
+                        type="button"
+                      >
+                        <UserRound size={17} />
+                        {isFollowing(selectedArtistName) ? "Following" : "Follow"}
                       </button>
                     )}
                   </div>
@@ -1507,14 +2051,26 @@ export function SpotifyApp() {
                       <strong>{currentTrack.artist}</strong>
                       <small>Main Artist</small>
                     </span>
-                    <button type="button">Follow</button>
+                    <button
+                      className={isFollowing(currentTrack.artist) ? "active" : ""}
+                      onClick={() => toggleFollow(currentTrack.artist)}
+                      type="button"
+                    >
+                      {isFollowing(currentTrack.artist) ? "Following" : "Follow"}
+                    </button>
                   </div>
                   <div className="credit-row">
                     <span>
                       <strong>{currentTrack.uploadedByName}</strong>
                       <small>Uploader</small>
                     </span>
-                    <button type="button">Follow</button>
+                    <button
+                      className={isFollowing(currentTrack.uploadedByName) ? "active" : ""}
+                      onClick={() => toggleFollow(currentTrack.uploadedByName)}
+                      type="button"
+                    >
+                      {isFollowing(currentTrack.uploadedByName) ? "Following" : "Follow"}
+                    </button>
                   </div>
                 </section>
               </>
@@ -1648,7 +2204,7 @@ export function SpotifyApp() {
       </footer>
 
       {uploadOpen && (
-        <Modal title="Upload song" onClose={() => setUploadOpen(false)}>
+        <Modal title={uploadTargetPlaylistId ? "Add song to playlist" : "Upload song"} onClose={closeUpload}>
           <form className="upload-form" onSubmit={handleUpload}>
             <label className="drop-field">
               <Upload size={24} />
@@ -1699,7 +2255,7 @@ export function SpotifyApp() {
 
             <button className="primary-auth-button" disabled={uploading} type="submit">
               {uploading ? <Loader2 className="spin" size={18} /> : <Upload size={18} />}
-              Save to MongoDB
+              {uploadTargetPlaylistId ? "Save to playlist" : "Save to MongoDB"}
             </button>
           </form>
         </Modal>
@@ -1729,8 +2285,13 @@ export function SpotifyApp() {
                 value={playlistForm.description}
               />
             </label>
-            <button className="primary-auth-button" type="submit">
-              <Plus size={18} />
+            <label className="cover-field">
+              <Download size={19} />
+              <span>{playlistForm.coverName || "Optional playlist cover"}</span>
+              <input accept="image/*" onChange={handlePlaylistCoverFileChange} ref={playlistCoverFileRef} type="file" />
+            </label>
+            <button className="primary-auth-button" disabled={playlistSaving} type="submit">
+              {playlistSaving ? <Loader2 className="spin" size={18} /> : <Plus size={18} />}
               Create playlist
             </button>
           </form>
@@ -1777,6 +2338,8 @@ export function SpotifyApp() {
 }
 
 type ShelfProps = {
+  canDeleteTrack: (track: Track) => boolean;
+  onDelete: (track: Track) => void;
   onLike: (track: Track) => void;
   onPlay: (track: Track, source: Track[]) => void;
   onQueue: (track: Track) => void;
@@ -1785,7 +2348,7 @@ type ShelfProps = {
   tracks: Track[];
 };
 
-function Shelf({ onLike, onPlay, onQueue, onShowAll, title, tracks }: ShelfProps) {
+function Shelf({ canDeleteTrack, onDelete, onLike, onPlay, onQueue, onShowAll, title, tracks }: ShelfProps) {
   if (!tracks.length) {
     return (
       <section className="shelf">
@@ -1824,6 +2387,11 @@ function Shelf({ onLike, onPlay, onQueue, onShowAll, title, tracks }: ShelfProps
               <IconButton label="Add to queue" onClick={() => onQueue(track)}>
                 <ListMusic size={18} />
               </IconButton>
+              {canDeleteTrack(track) && (
+                <IconButton label="Delete song" onClick={() => onDelete(track)}>
+                  <Trash2 size={18} />
+                </IconButton>
+              )}
             </div>
           </article>
         ))}

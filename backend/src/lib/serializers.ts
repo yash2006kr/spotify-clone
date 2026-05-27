@@ -44,10 +44,14 @@ export function trackToClient(track: AnyDocument, liked = false): Track {
 }
 
 export function playlistToClient(playlist: AnyDocument, tracks?: Track[]): Playlist {
+  const id = playlist._id.toString();
+
   return {
-    id: playlist._id.toString(),
+    id,
     name: playlist.name || "Untitled Playlist",
     description: playlist.description || "",
+    coverUrl: playlist.coverId ? `/api/playlists/${id}/cover` : null,
+    coverColor: typeof playlist.coverColor === "string" ? playlist.coverColor : "",
     isPublic: Boolean(playlist.isPublic),
     trackIds: (playlist.trackIds || []).map((id: unknown) => id?.toString()).filter(Boolean),
     ownerName: playlist.ownerName || "Music Fan",
