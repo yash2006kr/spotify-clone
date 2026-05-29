@@ -49,7 +49,7 @@ export async function GET() {
     const db = await getDb();
     const playlists = await db
       .collection("playlists")
-      .find({ ownerId: user._id })
+      .find({ $or: [{ ownerId: user._id }, { isPublic: true }] })
       .sort({ updatedAt: -1 })
       .toArray();
 

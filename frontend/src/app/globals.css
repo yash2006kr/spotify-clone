@@ -287,6 +287,19 @@ body {
   transform: translateY(-1px);
 }
 
+.auth-link-button {
+  justify-self: center;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 800;
+}
+
+.auth-link-button:hover {
+  color: #fff;
+}
+
 .auth-divider {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -679,15 +692,31 @@ body {
 
 .library-subbar {
   display: grid;
-  grid-template-columns: 24px 1fr 24px;
+  grid-template-columns: minmax(0, 1fr) 24px;
   align-items: center;
   gap: 12px;
   color: var(--muted);
   padding: 12px 22px;
 }
 
-.library-subbar span {
-  justify-self: end;
+.library-search-field {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.library-search-field input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #fff;
+}
+
+.library-search-field input::placeholder {
+  color: var(--muted);
 }
 
 .library-list {
@@ -1019,9 +1048,25 @@ body {
 
 .collection-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 14px;
   align-items: center;
   margin-top: 22px;
+}
+
+.visibility-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  font-weight: 900;
+  padding: 0 14px;
+}
+
+.danger-button {
+  color: var(--danger);
 }
 
 .round-play,
@@ -1359,6 +1404,10 @@ body {
   display: none;
 }
 
+.mobile-now-panel {
+  display: none;
+}
+
 .player-center {
   display: grid;
   gap: 9px;
@@ -1529,6 +1578,30 @@ input[type="range"]:hover {
   resize: vertical;
 }
 
+.visibility-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  border-radius: 999px;
+  background: #101010;
+  padding: 4px;
+}
+
+.visibility-options button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.visibility-options button.active {
+  background: #fff;
+  color: #111;
+}
+
 .toast {
   position: fixed;
   right: 24px;
@@ -1604,7 +1677,7 @@ input[type="range"]:hover {
   }
 
   .top-bar {
-    grid-template-columns: 54px 54px minmax(0, 1fr);
+    grid-template-columns: 44px 44px minmax(0, 1fr);
     gap: 8px;
     padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 12px;
   }
@@ -1616,15 +1689,15 @@ input[type="range"]:hover {
   .home-button {
     grid-column: 1;
     display: grid;
-    width: 54px;
-    height: 50px;
+    width: 44px;
+    height: 44px;
   }
 
   .mobile-library-button {
     grid-column: 2;
     display: grid;
-    width: 54px;
-    height: 50px;
+    width: 44px;
+    height: 44px;
     background: #1f1f1f;
     color: #fff;
   }
@@ -1640,9 +1713,15 @@ input[type="range"]:hover {
 
   .search-box {
     grid-column: 3;
-    height: 50px;
+    grid-template-columns: 22px minmax(0, 1fr);
+    gap: 8px;
+    height: 44px;
     min-width: 0;
-    padding: 0 14px;
+    padding: 0 12px;
+  }
+
+  .search-box input {
+    font-size: 0.92rem;
   }
 
   .upload-top-button {
@@ -1661,7 +1740,7 @@ input[type="range"]:hover {
   .content-grid {
     grid-template-columns: minmax(0, 1fr);
     min-height: 0;
-    padding: 0 10px 300px;
+    padding: 0 10px 230px;
   }
 
   .content-grid.details-closed {
@@ -1678,12 +1757,32 @@ input[type="range"]:hover {
 
   .mobile-library-open .library-panel {
     display: flex;
-    min-height: min(560px, calc(100dvh - 380px));
+    min-height: min(560px, calc(100dvh - 300px));
     max-height: none;
   }
 
-  .mobile-library-open .main-panel {
+  .mobile-library-open .main-panel,
+  .mobile-now-open .main-panel,
+  .mobile-now-open .library-panel {
     display: none;
+  }
+
+  .mobile-now-open .mobile-now-panel {
+    display: grid;
+    gap: 18px;
+    min-height: calc(100dvh - 260px);
+    overflow: auto;
+    padding: 18px;
+  }
+
+  .mobile-now-art-drag {
+    display: grid;
+    justify-items: center;
+    touch-action: pan-y;
+  }
+
+  .mobile-now-panel .artwork-hero {
+    width: min(76vw, 340px);
   }
 
   .hero-band,
@@ -1707,11 +1806,11 @@ input[type="range"]:hover {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
-    margin-bottom: 18px;
+    margin-bottom: 14px;
   }
 
   .hero-tabs button {
-    min-height: 48px;
+    min-height: 42px;
     padding: 0 12px;
   }
 
@@ -1741,27 +1840,38 @@ input[type="range"]:hover {
     left: 0;
     z-index: 20;
     grid-template-columns: 1fr;
-    gap: 10px;
-    padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+    gap: 8px;
+    max-height: 45dvh;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    background: linear-gradient(180deg, rgba(18, 18, 18, 0.72), rgba(0, 0, 0, 0.96));
+    backdrop-filter: blur(18px);
+    padding: 8px 14px calc(8px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .player-track {
+    order: 1;
+    min-height: 58px;
+    border-radius: 8px;
+    background: linear-gradient(180deg, rgba(18, 18, 18, 0.72), rgba(0, 0, 0, 0.34));
+    padding: 4px 8px;
+  }
+
+  .player-track.interactive {
+    cursor: pointer;
+  }
+
+  .player-center {
+    order: 2;
+    gap: 6px;
+    border-radius: 8px;
+    background: linear-gradient(180deg, rgba(13, 13, 13, 0.58), rgba(0, 0, 0, 0.3));
+    padding: 2px 0 0;
   }
 
   .mobile-action-dock {
+    order: 3;
     display: grid;
-    gap: 10px;
-  }
-
-  .mobile-upload-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    min-height: 48px;
-    border: 0;
-    border-radius: 999px;
-    background: #fff;
-    color: #111;
-    cursor: pointer;
-    font-weight: 900;
+    gap: 6px;
   }
 
   .mobile-action-icons {
@@ -1769,7 +1879,8 @@ input[type="range"]:hover {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: 8px;
+    min-height: 42px;
   }
 
   .mobile-profile-wrap {
@@ -1777,14 +1888,15 @@ input[type="range"]:hover {
   }
 
   .mobile-action-icons .avatar-button {
-    width: 48px;
-    height: 48px;
+    width: 42px;
+    height: 42px;
+    border-width: 6px;
   }
 
   .mobile-profile-popover {
     top: auto;
     right: -58px;
-    bottom: 58px;
+    bottom: 50px;
   }
 
   .mobile-profile-popover::before {
@@ -1854,7 +1966,17 @@ input[type="range"]:hover {
   }
 
   .transport {
-    gap: 6px;
+    gap: 4px;
+  }
+
+  .transport .icon-button {
+    width: 34px;
+    height: 34px;
+  }
+
+  .play-button {
+    width: 44px;
+    height: 44px;
   }
 
   .progress-line {

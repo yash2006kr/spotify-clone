@@ -321,6 +321,8 @@ export function SpotifyApp() {
   const coverFileRef = useRef<HTMLInputElement | null>(null);
   const playlistCoverFileRef = useRef<HTMLInputElement | null>(null);
   const selectedPlaylistCoverFileRef = useRef<HTMLInputElement | null>(null);
+  const albumCoverFileRef = useRef<HTMLInputElement | null>(null);
+  const mobileDetailsDragStart = useRef<number | null>(null);
   const [booting, setBooting] = useState(true);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [user, setUser] = useState<AppUser | null>(null);
@@ -347,6 +349,7 @@ export function SpotifyApp() {
   const [playlistOpen, setPlaylistOpen] = useState(false);
   const [playlistSaving, setPlaylistSaving] = useState(false);
   const [playlistCoverSaving, setPlaylistCoverSaving] = useState(false);
+  const [albumCoverSaving, setAlbumCoverSaving] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
@@ -354,6 +357,8 @@ export function SpotifyApp() {
   const [detailsOpen, setDetailsOpen] = useState(true);
   const [detailsMenuOpen, setDetailsMenuOpen] = useState(false);
   const [mobileLibraryOpen, setMobileLibraryOpen] = useState(false);
+  const [mobileNowOpen, setMobileNowOpen] = useState(false);
+  const [librarySearch, setLibrarySearch] = useState("");
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(
     () => typeof window !== "undefined" && window.matchMedia?.("(display-mode: standalone)").matches
@@ -380,7 +385,8 @@ export function SpotifyApp() {
     name: "",
     description: "",
     coverName: "",
-    coverColor: "#1ed760"
+    coverColor: "#1ed760",
+    isPublic: false
   });
 
   const showToast = useCallback((message: string) => {
@@ -397,6 +403,7 @@ export function SpotifyApp() {
     setMobileLibraryOpen(false);
     setDetailsOpen(true);
     setDetailsMenuOpen(false);
+    setMobileNowOpen(false);
     setProfileOpen(false);
     setQueueOpen(false);
     setActivityOpen(false);
@@ -419,6 +426,7 @@ export function SpotifyApp() {
 
   const openMobileLibrary = useCallback(() => {
     setMobileLibraryOpen(true);
+    setMobileNowOpen(false);
     setProfileOpen(false);
     setQueueOpen(false);
     setActivityOpen(false);
@@ -428,6 +436,7 @@ export function SpotifyApp() {
   const selectView = useCallback((nextView: ViewState) => {
     setView(nextView);
     setMobileLibraryOpen(false);
+    setMobileNowOpen(false);
   }, []);
 
   const openUpload = useCallback((playlistId?: string | null) => {
@@ -705,6 +714,44 @@ export function SpotifyApp() {
       .map(([name, artistTracks]) => ({ name, tracks: artistTracks, cover: artistTracks[0] }))
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [allTracks]);
+  const ownPlaylists = useMemo(
+    () => playlists.filter((playlist) => playlist.ownerId === user?.id),
+    [playlists, user?.id]
+  );
+  const selectedPlaylistOwned = Boolean(selectedPlaylist && selectedPlaylist.ownerId === user?.id);
+  const libraryQuery = librarySearch.trim().toLowerCase();
+  const visiblePlaylists = useMemo(
+    () =>
+      playlists.filter((playlist) =>
+        !libraryQuery ||
+        [playlist.name, playlist.description, playlist.ownerName, playlist.isPublic ? "public" : "private"].some(
+          (value) => value.toLowerCase().includes(libraryQuery)
+        )
+      ),
+    [libraryQuery, playlists]
+  );
+  const visibleLibraryAlbums = useMemo(
+    () =>
+      libraryAlbums.filter(
+        (album) =>
+          !libraryQuery ||
+          [album.name, ...album.tracks.flatMap((track) => [track.artist, track.title])].some((value) =>
+            value.toLowerCase().includes(libraryQuery)
+          )
+      ),
+    [libraryAlbums, libraryQuery]
+  );
+  const visibleLibraryArtists = useMemo(
+    () =>
+      libraryArtists.filter(
+        (artist) =>
+          !libraryQuery ||
+          [artist.name, ...artist.tracks.map((track) => track.title)].some((value) =>
+            value.toLowerCase().includes(libraryQuery)
+          )
+      ),
+    [libraryArtists, libraryQuery]
+  );
   const podcastTracks = useMemo(() => allTracks.filter(isPodcastTrack), [allTracks]);
   const searchTracks = search.trim() ? searchResults ?? filteredTracks : filteredTracks;
   const allTopTracks = useMemo(() => [...tracks].sort((a, b) => b.plays - a.plays), [tracks]);
@@ -765,6 +812,17 @@ export function SpotifyApp() {
   ]);
 
   const recentTracks = useMemo(() => allTracks.slice(0, 12), [allTracks]);
+  const visibleRecentTracks = useMemo(
+    () =>
+      recentTracks.filter(
+        (track) =>
+          !libraryQuery ||
+          [track.title, track.artist, track.album, track.genre].some((value) =>
+            value.toLowerCase().includes(libraryQuery)
+          )
+      ),
+    [libraryQuery, recentTracks]
+  );
   const topTracks = useMemo(() => allTopTracks.slice(0, 12), [allTopTracks]);
   const uploadedMix = useMemo(() => uniqueTracks([...likedTracks, ...topTracks, ...recentTracks]).slice(0, 12), [
     likedTracks,
@@ -790,6 +848,21 @@ export function SpotifyApp() {
     setPlaybackList((existing) => existing.map((track) => (track.id === trackId ? update(track) : track)));
     setManualQueue((existing) => existing.map((track) => (track.id === trackId ? update(track) : track)));
     setCurrentTrack((track) => (track?.id === trackId ? update(track) : track));
+  }, []);
+
+  const mergeTracksEverywhere = useCallback((updatedTracks: Track[]) => {
+    const updatedById = new Map(updatedTracks.map((track) => [track.id, track]));
+
+    setTracks((existing) => existing.map((track) => updatedById.get(track.id) || track));
+    setPlaylists((existing) =>
+      existing.map((playlist) => ({
+        ...playlist,
+        tracks: playlist.tracks?.map((track) => updatedById.get(track.id) || track)
+      }))
+    );
+    setPlaybackList((existing) => existing.map((track) => updatedById.get(track.id) || track));
+    setManualQueue((existing) => existing.map((track) => updatedById.get(track.id) || track));
+    setCurrentTrack((track) => (track ? updatedById.get(track.id) || track : track));
   }, []);
 
   const playTrack = useCallback((track: Track, source: Track[] = activeTracks) => {
@@ -1132,7 +1205,7 @@ export function SpotifyApp() {
   );
 
   const canDeleteTrack = useCallback(
-    (track: Track) => Boolean(user && (!track.uploadedById || track.uploadedById === user.id)),
+    () => Boolean(user),
     [user]
   );
 
@@ -1195,22 +1268,29 @@ export function SpotifyApp() {
   );
 
   async function handleLogout() {
-    await apiFetch("/api/auth/logout", { method: "POST" });
-    clearSessionToken();
-    setUser(null);
-    setCurrentTrack(null);
-    setIsPlaying(false);
-    setTracks([]);
-    setPlaylists([]);
-    setView("home");
-    setSearch("");
-    setSearchResults(null);
-    setSearchLoading(false);
-    setLibraryFilter("all");
-    setUploadTargetPlaylistId(null);
-    setFollowedArtists(new Set());
-    setProfileOpen(false);
-    setQueueOpen(false);
+    try {
+      await apiFetch("/api/auth/logout", { method: "POST" });
+    } catch {
+      // Local session cleanup should still happen if the network request fails.
+    } finally {
+      clearSessionToken();
+      setUser(null);
+      setCurrentTrack(null);
+      setIsPlaying(false);
+      setTracks([]);
+      setPlaylists([]);
+      setView("home");
+      setSearch("");
+      setSearchResults(null);
+      setSearchLoading(false);
+      setLibraryFilter("all");
+      setLibrarySearch("");
+      setUploadTargetPlaylistId(null);
+      setFollowedArtists(new Set());
+      setProfileOpen(false);
+      setQueueOpen(false);
+      setMobileNowOpen(false);
+    }
   }
 
   async function handleInstallApp() {
@@ -1220,7 +1300,7 @@ export function SpotifyApp() {
     }
 
     if (!installPrompt) {
-      showToast("On Android Chrome, open the browser menu and tap Add to Home screen.");
+      showToast("Use your browser menu to install this app.");
       return;
     }
 
@@ -1247,6 +1327,7 @@ export function SpotifyApp() {
     formData.append("name", playlistForm.name);
     formData.append("description", playlistForm.description);
     formData.append("coverColor", playlistForm.coverColor);
+    formData.append("isPublic", String(playlistForm.isPublic));
 
     const cover = playlistCoverFileRef.current?.files?.[0];
 
@@ -1270,7 +1351,7 @@ export function SpotifyApp() {
 
       setPlaylists((existing) => [data.playlist, ...existing]);
       setPlaylistOpen(false);
-      setPlaylistForm({ name: "", description: "", coverName: "", coverColor: "#1ed760" });
+      setPlaylistForm({ name: "", description: "", coverName: "", coverColor: "#1ed760", isPublic: false });
       if (playlistCoverFileRef.current) {
         playlistCoverFileRef.current.value = "";
       }
@@ -1369,6 +1450,87 @@ export function SpotifyApp() {
     }
   }
 
+  async function handleAlbumCoverChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file || !selectedAlbumName) {
+      return;
+    }
+
+    setAlbumCoverSaving(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("album", selectedAlbumName);
+      formData.append("cover", file);
+
+      const result = await apiFetch("/api/albums/cover", {
+        method: "PATCH",
+        body: formData
+      });
+      const data = await result.json();
+
+      if (!result.ok) {
+        throw new Error(data.error || "Could not update album cover.");
+      }
+
+      mergeTracksEverywhere(data.tracks || []);
+      showToast("Album cover updated.");
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setAlbumCoverSaving(false);
+      if (albumCoverFileRef.current) {
+        albumCoverFileRef.current.value = "";
+      }
+    }
+  }
+
+  async function handlePlaylistVisibility(isPublic: boolean) {
+    if (!selectedPlaylist || !selectedPlaylistOwned) {
+      return;
+    }
+
+    const result = await apiFetch(`/api/playlists/${selectedPlaylist.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isPublic })
+    });
+    const data = await result.json().catch(() => ({}));
+
+    if (!result.ok) {
+      showToast(data.error || "Could not update playlist visibility.");
+      return;
+    }
+
+    setPlaylists((existing) =>
+      existing.map((playlist) => (playlist.id === data.playlist.id ? { ...playlist, ...data.playlist } : playlist))
+    );
+    showToast(isPublic ? "Playlist is public." : "Playlist is private.");
+  }
+
+  async function handleDeletePlaylist() {
+    if (!selectedPlaylist || !selectedPlaylistOwned) {
+      return;
+    }
+
+    if (!window.confirm(`Delete "${selectedPlaylist.name}"? Songs will stay in the library.`)) {
+      return;
+    }
+
+    const result = await apiFetch(`/api/playlists/${selectedPlaylist.id}`, { method: "DELETE" });
+    const data = await result.json().catch(() => ({}));
+
+    if (!result.ok) {
+      showToast(data.error || "Could not delete playlist.");
+      return;
+    }
+
+    setPlaylists((existing) => existing.filter((playlist) => playlist.id !== selectedPlaylist.id));
+    resetHomeView();
+    showToast(`Deleted "${selectedPlaylist.name}".`);
+  }
+
   async function handleUpload(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const audio = uploadFileRef.current?.files?.[0];
@@ -1456,6 +1618,25 @@ export function SpotifyApp() {
     setRepeatMode((current) => (current === "off" ? "all" : current === "all" ? "one" : "off"));
   }
 
+  function beginMobileNowDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    mobileDetailsDragStart.current = event.clientY;
+  }
+
+  function moveMobileNowDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (mobileDetailsDragStart.current === null) {
+      return;
+    }
+
+    if (event.clientY - mobileDetailsDragStart.current > 80) {
+      setMobileNowOpen(false);
+      mobileDetailsDragStart.current = null;
+    }
+  }
+
+  function endMobileNowDrag() {
+    mobileDetailsDragStart.current = null;
+  }
+
   if (booting) {
     return (
       <main className="splash-screen">
@@ -1539,7 +1720,7 @@ export function SpotifyApp() {
   const gridStyle = { "--library-width": `${libraryWidth}px` } as CSSProperties;
 
   return (
-    <main className={`spotify-shell ${mobileLibraryOpen ? "mobile-library-open" : ""}`}>
+    <main className={`spotify-shell ${mobileLibraryOpen ? "mobile-library-open" : ""} ${mobileNowOpen ? "mobile-now-open" : ""}`}>
       <audio
         onEnded={handleEnded}
         onLoadedMetadata={(event) => setLoadedDuration(event.currentTarget.duration || currentTrack?.duration || 0)}
@@ -1590,6 +1771,7 @@ export function SpotifyApp() {
 
               setView("home");
               setMobileLibraryOpen(false);
+              setMobileNowOpen(false);
             }}
             placeholder="What do you want to play?"
             type="search"
@@ -1597,7 +1779,11 @@ export function SpotifyApp() {
           />
         </label>
 
-        <button className="upload-top-button" onClick={() => openUpload(selectedPlaylist?.id)} type="button">
+        <button
+          className="upload-top-button"
+          onClick={() => openUpload(selectedPlaylistOwned ? selectedPlaylist?.id : null)}
+          type="button"
+        >
           <Upload size={18} />
           Add songs
         </button>
@@ -1663,7 +1849,7 @@ export function SpotifyApp() {
                   <small>Songs</small>
                 </span>
                 <span>
-                  <strong>{playlists.length}</strong>
+                  <strong>{ownPlaylists.length}</strong>
                   <small>Playlists</small>
                 </span>
                 <span>
@@ -1673,9 +1859,13 @@ export function SpotifyApp() {
               </div>
               <button onClick={handleInstallApp} role="menuitem" type="button">
                 <Download size={18} />
-                Install Android app
+                Install
               </button>
-              <button onClick={() => openUpload(selectedPlaylist?.id)} role="menuitem" type="button">
+              <button
+                onClick={() => openUpload(selectedPlaylistOwned ? selectedPlaylist?.id : null)}
+                role="menuitem"
+                type="button"
+              >
                 <Upload size={18} />
                 Upload song
               </button>
@@ -1740,12 +1930,16 @@ export function SpotifyApp() {
           </div>
 
           <div className="library-subbar">
-            <Search size={21} />
-            <span>
-              {libraryFilter === "all"
-                ? "Recent"
-                : libraryFilter.slice(0, 1).toUpperCase() + libraryFilter.slice(1)}
-            </span>
+            <label className="library-search-field">
+              <Search size={18} />
+              <input
+                aria-label="Search library"
+                onChange={(event) => setLibrarySearch(event.target.value)}
+                placeholder={`Search ${libraryFilter === "all" ? "library" : libraryFilter}`}
+                type="search"
+                value={librarySearch}
+              />
+            </label>
             <ListMusic size={20} />
           </div>
 
@@ -1765,7 +1959,7 @@ export function SpotifyApp() {
             )}
 
             {(libraryFilter === "all" || libraryFilter === "playlists") &&
-              playlists.map((playlist) => (
+              visiblePlaylists.map((playlist) => (
                 <button
                   className={`library-item ${view === `playlist:${playlist.id}` ? "selected" : ""}`}
                   key={playlist.id}
@@ -1775,13 +1969,15 @@ export function SpotifyApp() {
                   <PlaylistArtwork playlist={playlist} />
                   <span>
                     <strong>{playlist.name}</strong>
-                    <small>Playlist · {playlist.trackIds.length} songs</small>
+                    <small>
+                      {playlist.isPublic ? "Public" : "Private"} playlist · {playlist.trackIds.length} songs
+                    </small>
                   </span>
                 </button>
               ))}
 
             {libraryFilter === "albums" &&
-              libraryAlbums.map((album) => (
+              visibleLibraryAlbums.map((album) => (
                 <button
                   className={`library-item ${selectedAlbumName === album.name ? "selected" : ""}`}
                   key={album.name}
@@ -1797,7 +1993,7 @@ export function SpotifyApp() {
               ))}
 
             {libraryFilter === "artists" &&
-              libraryArtists.map((artist) => (
+              visibleLibraryArtists.map((artist) => (
                 <button
                   className={`library-item ${selectedArtistName === artist.name ? "selected" : ""}`}
                   key={artist.name}
@@ -1813,7 +2009,7 @@ export function SpotifyApp() {
               ))}
 
             {libraryFilter === "all" &&
-              recentTracks.map((track) => (
+              visibleRecentTracks.map((track) => (
                 <button
                   className="library-item"
                   key={track.id}
@@ -1848,6 +2044,91 @@ export function SpotifyApp() {
           role="separator"
           title="Resize library"
         />
+
+        <section className="mobile-now-panel panel">
+          {currentTrack ? (
+            <>
+              <div
+                className="mobile-now-art-drag"
+                onPointerDown={beginMobileNowDrag}
+                onPointerMove={moveMobileNowDrag}
+                onPointerUp={endMobileNowDrag}
+                onPointerCancel={endMobileNowDrag}
+              >
+                <Artwork track={currentTrack} size="hero" />
+              </div>
+              <div className="now-title-line">
+                <div>
+                  <h3>{currentTrack.title}</h3>
+                  <p>{currentTrack.artist}</p>
+                </div>
+                <IconButton active={currentTrack.liked} label="Like song" onClick={() => toggleLike(currentTrack)}>
+                  <Heart fill={currentTrack.liked ? "currentColor" : "none"} size={21} />
+                </IconButton>
+              </div>
+
+              <section className="credits-box">
+                <div className="credits-title">
+                  <h3>Credits</h3>
+                  <button type="button">Show all</button>
+                </div>
+                <div className="credit-row">
+                  <span>
+                    <strong>{currentTrack.artist}</strong>
+                    <small>Main Artist</small>
+                  </span>
+                  <button
+                    className={isFollowing(currentTrack.artist) ? "active" : ""}
+                    onClick={() => toggleFollow(currentTrack.artist)}
+                    type="button"
+                  >
+                    {isFollowing(currentTrack.artist) ? "Following" : "Follow"}
+                  </button>
+                </div>
+                <div className="credit-row">
+                  <span>
+                    <strong>{currentTrack.uploadedByName}</strong>
+                    <small>Uploader</small>
+                  </span>
+                  <button
+                    className={isFollowing(currentTrack.uploadedByName) ? "active" : ""}
+                    onClick={() => toggleFollow(currentTrack.uploadedByName)}
+                    type="button"
+                  >
+                    {isFollowing(currentTrack.uploadedByName) ? "Following" : "Follow"}
+                  </button>
+                </div>
+              </section>
+
+              <section className="queue-box">
+                <div className="credits-title">
+                  <h3>Next in queue</h3>
+                  <button onClick={() => setManualQueue([])} type="button">Clear</button>
+                </div>
+
+                {nextQueueTracks.length ? (
+                  nextQueueTracks.map((track) => (
+                    <button className="queue-item" key={`${track.id}-mobile-queue`} onClick={() => playTrack(track, tracks)} type="button">
+                      <Artwork track={track} size="sm" />
+                      <span>
+                        <strong>{track.title}</strong>
+                        <small>{track.artist}</small>
+                      </span>
+                    </button>
+                  ))
+                ) : (
+                  <p className="queue-empty">Queue is empty.</p>
+                )}
+              </section>
+            </>
+          ) : (
+            <div className="empty-now">
+              <Disc3 size={56} />
+              <h3>Pick a song</h3>
+              <p>Your uploads and community tracks will appear here while playing.</p>
+            </div>
+          )}
+        </section>
 
         <section className="main-panel panel">
           <div className="hero-band">
@@ -1885,36 +2166,38 @@ export function SpotifyApp() {
               </button>
             </div>
 
-            <div className="quick-grid">
-              <button className="quick-tile" onClick={() => selectView("liked")} type="button">
-                <Artwork liked size="sm" />
-                <span>Liked Songs</span>
-              </button>
-
-              <button className="quick-tile" onClick={() => openUpload()} type="button">
-                <PlaylistArtwork add />
-                <span>Add songs</span>
-              </button>
-
-              {playlists.slice(0, 4).map((playlist) => (
-                <button
-                  className="quick-tile"
-                  key={playlist.id}
-                  onClick={() => selectView(`playlist:${playlist.id}`)}
-                  type="button"
-                >
-                  <PlaylistArtwork playlist={playlist} />
-                  <span>{playlist.name}</span>
+            {view === "home" && !search && (
+              <div className="quick-grid">
+                <button className="quick-tile" onClick={() => selectView("liked")} type="button">
+                  <Artwork liked size="sm" />
+                  <span>Liked Songs</span>
                 </button>
-              ))}
 
-              {recentTracks.slice(0, Math.max(0, 6 - playlists.length)).map((track) => (
-                <button className="quick-tile" key={track.id} onClick={() => playTrack(track, recentTracks)} type="button">
-                  <Artwork track={track} size="sm" />
-                  <span>{track.title}</span>
+                <button className="quick-tile" onClick={() => openUpload()} type="button">
+                  <PlaylistArtwork add />
+                  <span>Add songs</span>
                 </button>
-              ))}
-            </div>
+
+                {playlists.slice(0, 4).map((playlist) => (
+                  <button
+                    className="quick-tile"
+                    key={playlist.id}
+                    onClick={() => selectView(`playlist:${playlist.id}`)}
+                    type="button"
+                  >
+                    <PlaylistArtwork playlist={playlist} />
+                    <span>{playlist.name}</span>
+                  </button>
+                ))}
+
+                {recentTracks.slice(0, Math.max(0, 6 - playlists.length)).map((track) => (
+                  <button className="quick-tile" key={track.id} onClick={() => playTrack(track, recentTracks)} type="button">
+                    <Artwork track={track} size="sm" />
+                    <span>{track.title}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           {view === "home" && !search ? (
@@ -1992,6 +2275,9 @@ export function SpotifyApp() {
                       <Shuffle size={22} />
                     </IconButton>
                     {selectedPlaylist && (
+                      <span className="visibility-pill">{selectedPlaylist.isPublic ? "Public" : "Private"}</span>
+                    )}
+                    {selectedPlaylist && selectedPlaylistOwned && (
                       <>
                         <button className="ghost-button" onClick={() => openUpload(selectedPlaylist.id)} type="button">
                           <Upload size={17} />
@@ -2011,6 +2297,38 @@ export function SpotifyApp() {
                           className="sr-only-file"
                           onChange={handleSelectedPlaylistCoverChange}
                           ref={selectedPlaylistCoverFileRef}
+                          type="file"
+                        />
+                        <button
+                          className={`ghost-button ${selectedPlaylist.isPublic ? "active" : ""}`}
+                          onClick={() => handlePlaylistVisibility(!selectedPlaylist.isPublic)}
+                          type="button"
+                        >
+                          <UserRound size={17} />
+                          Make {selectedPlaylist.isPublic ? "private" : "public"}
+                        </button>
+                        <button className="ghost-button danger-button" onClick={handleDeletePlaylist} type="button">
+                          <Trash2 size={17} />
+                          Delete
+                        </button>
+                      </>
+                    )}
+                    {selectedAlbumName && (
+                      <>
+                        <button
+                          className="ghost-button"
+                          disabled={albumCoverSaving}
+                          onClick={() => albumCoverFileRef.current?.click()}
+                          type="button"
+                        >
+                          {albumCoverSaving ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
+                          Cover
+                        </button>
+                        <input
+                          accept="image/*"
+                          className="sr-only-file"
+                          onChange={handleAlbumCoverChange}
+                          ref={albumCoverFileRef}
                           type="file"
                         />
                       </>
@@ -2045,8 +2363,8 @@ export function SpotifyApp() {
                 onLike={toggleLike}
                 onPlay={playTrack}
                 onQueue={addToQueue}
-                onRemove={selectedPlaylist ? removeFromPlaylist : undefined}
-                playlists={playlists}
+                onRemove={selectedPlaylist && selectedPlaylistOwned ? removeFromPlaylist : undefined}
+                playlists={ownPlaylists}
                 source={activeTracks}
                 tracks={activeTracks}
               />
@@ -2163,24 +2481,48 @@ export function SpotifyApp() {
       </section>
 
       <footer className="player-bar">
-        <div className="player-track">
+        <div
+          className={`player-track ${currentTrack ? "interactive" : ""}`}
+          onClick={(event) => {
+            if (!currentTrack || (event.target as HTMLElement).closest("button")) {
+              return;
+            }
+
+            setMobileLibraryOpen(false);
+            setMobileNowOpen(true);
+          }}
+          onKeyDown={(event) => {
+            if (!currentTrack || (event.key !== "Enter" && event.key !== " ")) {
+              return;
+            }
+
+            event.preventDefault();
+            setMobileLibraryOpen(false);
+            setMobileNowOpen(true);
+          }}
+          role={currentTrack ? "button" : undefined}
+          tabIndex={currentTrack ? 0 : undefined}
+        >
           {currentTrack ? <Artwork track={currentTrack} size="sm" /> : <div className="empty-art" />}
           <span>
             <strong>{currentTrack?.title || "No song selected"}</strong>
             <small>{currentTrack?.artist || "Upload or play a track"}</small>
           </span>
           {currentTrack && (
-            <IconButton active={currentTrack.liked} label="Like song" onClick={() => toggleLike(currentTrack)}>
+            <IconButton
+              active={currentTrack.liked}
+              label="Like song"
+              onClick={(event) => {
+                event.stopPropagation();
+                toggleLike(currentTrack);
+              }}
+            >
               <Heart fill={currentTrack.liked ? "currentColor" : "none"} size={18} />
             </IconButton>
           )}
         </div>
 
         <div className="mobile-action-dock">
-          <button className="mobile-upload-button" onClick={() => openUpload(selectedPlaylist?.id)} type="button">
-            <Upload size={18} />
-            Add songs
-          </button>
           <div className="mobile-action-icons">
             <IconButton
               label="Notifications"
@@ -2235,6 +2577,10 @@ export function SpotifyApp() {
                   <button onClick={() => setPlaylistOpen(true)} role="menuitem" type="button">
                     <Plus size={18} />
                     Create playlist
+                  </button>
+                  <button onClick={handleInstallApp} role="menuitem" type="button">
+                    <Download size={18} />
+                    Install
                   </button>
                   <button onClick={handleLogout} role="menuitem" type="button">
                     <LogOut size={18} />
@@ -2419,6 +2765,22 @@ export function SpotifyApp() {
               <span>{playlistForm.coverName || "Optional playlist cover"}</span>
               <input accept="image/*" onChange={handlePlaylistCoverFileChange} ref={playlistCoverFileRef} type="file" />
             </label>
+            <div className="visibility-options" role="group" aria-label="Playlist visibility">
+              <button
+                className={!playlistForm.isPublic ? "active" : ""}
+                onClick={() => setPlaylistForm((existing) => ({ ...existing, isPublic: false }))}
+                type="button"
+              >
+                Private
+              </button>
+              <button
+                className={playlistForm.isPublic ? "active" : ""}
+                onClick={() => setPlaylistForm((existing) => ({ ...existing, isPublic: true }))}
+                type="button"
+              >
+                Public
+              </button>
+            </div>
             <button className="primary-auth-button" disabled={playlistSaving} type="submit">
               {playlistSaving ? <Loader2 className="spin" size={18} /> : <Plus size={18} />}
               Create playlist

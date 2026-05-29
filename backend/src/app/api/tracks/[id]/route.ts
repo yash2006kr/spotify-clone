@@ -15,10 +15,6 @@ type PlaylistDocument = {
   updatedAt: Date;
 };
 
-function isSameObjectId(left: unknown, right: ObjectId) {
-  return left instanceof ObjectId && left.equals(right);
-}
-
 async function deleteFile(bucketName: "audio" | "covers", fileId: unknown) {
   if (!(fileId instanceof ObjectId)) {
     return;
@@ -33,9 +29,22 @@ async function deleteFile(bucketName: "audio" | "covers", fileId: unknown) {
   }
 }
 
+async function deleteTrackCoverIfUnused(coverId: unknown, deletedTrackId: ObjectId) {
+  if (!(coverId instanceof ObjectId)) {
+    return;
+  }
+
+  const db = await getDb();
+  const stillUsed = await db.collection("tracks").findOne({ _id: { $ne: deletedTrackId }, coverId });
+
+  if (!stillUsed) {
+    await deleteFile("covers", coverId);
+  }
+}
+
 export async function DELETE(_request: Request, context: RouteContext) {
   try {
-    const user = await requireUser();
+    await requireUser();
     const { id } = await context.params;
 
     if (!ObjectId.isValid(id)) {
@@ -50,10 +59,6 @@ export async function DELETE(_request: Request, context: RouteContext) {
       return NextResponse.json({ error: "Track not found." }, { status: 404 });
     }
 
-    if (track.uploadedBy && !isSameObjectId(track.uploadedBy, user._id)) {
-      return NextResponse.json({ error: "Only the uploader can delete this song." }, { status: 403 });
-    }
-
     await Promise.all([
       db.collection("tracks").deleteOne({ _id: trackObjectId }),
       db.collection("likes").deleteMany({ trackId: trackObjectId }),
@@ -62,7 +67,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
         { $pull: { trackIds: trackObjectId }, $set: { updatedAt: new Date() } }
       ),
       deleteFile("audio", track.fileId),
-      deleteFile("covers", track.coverId)
+      deleteTrackCoverIfUnused(track.coverId, trackObjectId)
     ]);
 
     return NextResponse.json({ ok: true });

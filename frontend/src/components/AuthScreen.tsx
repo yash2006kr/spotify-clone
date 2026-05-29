@@ -43,6 +43,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [googleReady, setGoogleReady] = useState(false);
+  const [resetAccountFound, setResetAccountFound] = useState(false);
   const googleButtonRef = useRef<HTMLDivElement | null>(null);
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
@@ -122,12 +123,45 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
     document.head.appendChild(script);
   }, [googleClientId, onAuthenticated]);
 
+  function switchMode(nextMode: AuthMode) {
+    setMode(nextMode);
+    setError("");
+    setPassword("");
+    setResetAccountFound(false);
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setLoading(true);
     setError("");
 
     try {
+      if (mode === "forgot") {
+        const result = await apiFetch("/api/auth/forgot-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            identifier: email,
+            password: resetAccountFound ? password : undefined
+          })
+        });
+        const data = await result.json();
+
+        if (!result.ok) {
+          throw new Error(data.error || "Password reset failed.");
+        }
+
+        if (!resetAccountFound) {
+          setResetAccountFound(true);
+          setName(data.name || "");
+          return;
+        }
+
+        storeSessionToken(data.sessionToken);
+        onAuthenticated(data.user);
+        return;
+      }
+
       const result = await apiFetch(`/api/auth/${mode === "login" ? "login" : "register"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -169,23 +203,33 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           <span>spotify</span>
         </div>
 
-        <h1>{mode === "login" ? "Log in to your music" : "Create your account"}</h1>
+        <h1>
+          {mode === "login"
+            ? "Log in to your music"
+            : mode === "register"
+              ? "Create your account"
+              : resetAccountFound
+                ? "Choose a new password"
+                : "Find your account"}
+        </h1>
         <p className="auth-subtitle">
-          Upload tracks, build playlists, and keep your listening library synced through MongoDB.
+          {mode === "forgot"
+            ? "Enter your username or email, then set a new password and jump back into your library."
+            : "Upload tracks, build playlists, and keep your listening library synced through MongoDB."}
         </p>
 
         <div className="auth-tabs" role="tablist" aria-label="Authentication mode">
           <button
             className={mode === "login" ? "active" : ""}
             type="button"
-            onClick={() => setMode("login")}
+            onClick={() => switchMode("login")}
           >
             Log in
           </button>
           <button
             className={mode === "register" ? "active" : ""}
             type="button"
-            onClick={() => setMode("register")}
+            onClick={() => switchMode("register")}
           >
             Sign up
           </button>
@@ -208,36 +252,56 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           )}
 
           <label className="field">
-            <Mail size={18} />
+            {mode === "forgot" ? <UserRound size={18} /> : <Mail size={18} />}
             <input
-              autoComplete="email"
+              autoComplete={mode === "forgot" ? "username" : "email"}
+              disabled={mode === "forgot" && resetAccountFound}
               onChange={(event) => setEmail(event.target.value)}
-              placeholder="Email"
+              placeholder={mode === "forgot" ? "Username or email" : "Email"}
               required
-              type="email"
+              type={mode === "forgot" ? "text" : "email"}
               value={email}
             />
           </label>
 
-          <label className="field">
-            <Lock size={18} />
-            <input
-              autoComplete={mode === "login" ? "current-password" : "new-password"}
-              minLength={mode === "register" ? 8 : undefined}
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Password"
-              required
-              type="password"
-              value={password}
-            />
-          </label>
+          {(mode !== "forgot" || resetAccountFound) && (
+            <label className="field">
+              <Lock size={18} />
+              <input
+                autoComplete={mode === "login" ? "current-password" : "new-password"}
+                minLength={mode === "register" || mode === "forgot" ? 8 : undefined}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder={mode === "forgot" ? "New password" : "Password"}
+                required
+                type="password"
+                value={password}
+              />
+            </label>
+          )}
 
           {error && <p className="form-error">{error}</p>}
 
           <button className="primary-auth-button" disabled={loading} type="submit">
             {loading ? <Loader2 className="spin" size={18} /> : null}
-            {mode === "login" ? "Log in" : "Create account"}
+            {mode === "login"
+              ? "Log in"
+              : mode === "register"
+                ? "Create account"
+                : resetAccountFound
+                  ? "Reset and log in"
+                  : "Continue"}
           </button>
+
+          {mode === "login" && (
+            <button className="auth-link-button" onClick={() => switchMode("forgot")} type="button">
+              Forgot password?
+            </button>
+          )}
+          {mode === "forgot" && (
+            <button className="auth-link-button" onClick={() => switchMode("login")} type="button">
+              Back to log in
+            </button>
+          )}
         </form>
 
         <div className="auth-divider">

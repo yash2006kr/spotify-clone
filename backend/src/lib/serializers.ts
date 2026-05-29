@@ -53,6 +53,7 @@ export function playlistToClient(playlist: AnyDocument, tracks?: Track[]): Playl
     coverUrl: playlist.coverId ? `/api/playlists/${id}/cover` : null,
     coverColor: typeof playlist.coverColor === "string" ? playlist.coverColor : "",
     isPublic: Boolean(playlist.isPublic),
+    ownerId: playlist.ownerId?.toString?.() || "",
     trackIds: (playlist.trackIds || []).map((id: unknown) => id?.toString()).filter(Boolean),
     ownerName: playlist.ownerName || "Music Fan",
     createdAt: dateString(playlist.createdAt),

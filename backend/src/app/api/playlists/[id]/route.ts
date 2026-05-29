@@ -47,13 +47,23 @@ async function readPlaylistPatch(request: NextRequest) {
   };
 }
 
-async function getOwnedPlaylist(id: string, userId: ObjectId) {
+async function getPlaylist(id: string) {
   if (!ObjectId.isValid(id)) {
     return null;
   }
 
   const db = await getDb();
-  return db.collection("playlists").findOne({ _id: new ObjectId(id), ownerId: userId });
+  return db.collection("playlists").findOne({ _id: new ObjectId(id) });
+}
+
+async function getOwnedPlaylist(id: string, userId: ObjectId) {
+  const playlist = await getPlaylist(id);
+
+  if (!playlist || !(playlist.ownerId instanceof ObjectId) || !playlist.ownerId.equals(userId)) {
+    return null;
+  }
+
+  return playlist;
 }
 
 async function deleteCoverFile(fileId: unknown) {
@@ -74,9 +84,11 @@ export async function GET(_request: Request, context: RouteContext) {
   try {
     const user = await requireUser();
     const { id } = await context.params;
-    const playlist = await getOwnedPlaylist(id, user._id);
+    const playlist = await getPlaylist(id);
 
-    if (!playlist) {
+    const isOwner = playlist?.ownerId instanceof ObjectId && playlist.ownerId.equals(user._id);
+
+    if (!playlist || (!isOwner && !playlist.isPublic)) {
       return NextResponse.json({ error: "Playlist not found." }, { status: 404 });
     }
 
@@ -199,6 +211,7 @@ export async function DELETE(_request: Request, context: RouteContext) {
 
     const db = await getDb();
     await db.collection("playlists").deleteOne({ _id: playlist._id });
+    await deleteCoverFile(playlist.coverId);
 
     return NextResponse.json({ ok: true });
   } catch (error) {
