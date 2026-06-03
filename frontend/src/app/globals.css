@@ -605,7 +605,7 @@ body {
 
 .content-grid {
   display: grid;
-  grid-template-columns: minmax(240px, var(--library-width, 330px)) 10px minmax(0, 1fr) minmax(280px, 430px);
+  grid-template-columns: minmax(240px, var(--library-width, 330px)) 10px minmax(0, 1fr) 10px minmax(300px, var(--now-width, 430px));
   min-height: 0;
   padding: 0 10px;
 }
@@ -614,7 +614,8 @@ body {
   grid-template-columns: minmax(240px, var(--library-width, 330px)) 10px minmax(0, 1fr);
 }
 
-.library-resizer {
+.library-resizer,
+.now-resizer {
   width: 10px;
   min-height: 0;
   border-radius: 999px;
@@ -622,7 +623,8 @@ body {
   touch-action: none;
 }
 
-.library-resizer::before {
+.library-resizer::before,
+.now-resizer::before {
   display: block;
   width: 2px;
   height: 100%;
@@ -633,7 +635,8 @@ body {
   transition: background 140ms ease;
 }
 
-.library-resizer:hover::before {
+.library-resizer:hover::before,
+.now-resizer:hover::before {
   background: rgba(255, 255, 255, 0.2);
 }
 
@@ -1755,7 +1758,8 @@ input[type="range"]:hover {
     grid-template-columns: minmax(240px, var(--library-width, 330px)) 10px minmax(0, 1fr);
   }
 
-  .now-panel {
+  .now-panel,
+  .now-resizer {
     display: none;
   }
 
@@ -1960,18 +1964,18 @@ input[type="range"]:hover {
     gap: 7px;
     max-height: 42dvh;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
-    background: linear-gradient(180deg, rgba(18, 18, 18, 0.5), rgba(0, 0, 0, 0.94));
+    background: linear-gradient(180deg, rgba(18, 18, 18, 0.34), rgba(0, 0, 0, 0.86));
     backdrop-filter: blur(18px);
     padding: 7px 12px calc(7px + env(safe-area-inset-bottom, 0px));
   }
 
   .player-track {
-    order: 2;
+    order: 1;
     grid-template-columns: 48px minmax(0, 1fr) 34px;
     gap: 10px;
     min-height: 54px;
     border-radius: 8px;
-    background: linear-gradient(180deg, rgba(25, 25, 25, 0.5), rgba(0, 0, 0, 0.28));
+    background: linear-gradient(180deg, rgba(25, 25, 25, 0.32), rgba(0, 0, 0, 0.16));
     padding: 4px 8px;
   }
 
@@ -1986,10 +1990,10 @@ input[type="range"]:hover {
   }
 
   .player-center {
-    order: 1;
+    order: 2;
     gap: 4px;
     border-radius: 8px;
-    background: linear-gradient(180deg, rgba(22, 22, 22, 0.46), rgba(0, 0, 0, 0.22));
+    background: linear-gradient(180deg, rgba(22, 22, 22, 0.28), rgba(0, 0, 0, 0.14));
     padding: 2px 4px 4px;
   }
 

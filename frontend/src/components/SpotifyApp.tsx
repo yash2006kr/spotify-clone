@@ -65,6 +65,10 @@ type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
   userChoice: Promise<{ outcome: "accepted" | "dismissed"; platform: string }>;
 };
+type ArtistCoverPayload = {
+  artist: string;
+  coverUrl: string;
+};
 
 const gradients = [
   "linear-gradient(135deg, #6f45ff 0%, #c2f6df 100%)",
@@ -271,21 +275,36 @@ function saveIdList(key: string, ids: string[]) {
   }
 }
 
+function artistKey(artist: string) {
+  return artist.trim().toLowerCase();
+}
+
+function isArtistCoverPayload(value: unknown): value is ArtistCoverPayload {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    typeof (value as ArtistCoverPayload).artist === "string" &&
+    typeof (value as ArtistCoverPayload).coverUrl === "string"
+  );
+}
+
 type ArtworkProps = {
   track?: Track | null;
   size?: "sm" | "md" | "lg" | "hero";
   circle?: boolean;
   liked?: boolean;
+  imageUrl?: string | null;
 };
 
-function Artwork({ track, size = "md", circle = false, liked = false }: ArtworkProps) {
+function Artwork({ track, size = "md", circle = false, liked = false, imageUrl }: ArtworkProps) {
   const style = { background: liked ? gradients[0] : gradientFor(track?.id || "empty") };
+  const imageSrc = imageUrl ? mediaUrl(imageUrl) : mediaUrl(track?.coverUrl);
 
   return (
     <div className={`artwork artwork-${size} ${circle ? "circle" : ""}`} style={style}>
-      {track?.coverUrl ? (
+      {imageSrc ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img alt="" src={mediaUrl(track.coverUrl) || ""} />
+        <img alt="" src={imageSrc} />
       ) : liked ? (
         <Heart fill="currentColor" size={size === "hero" ? 74 : 26} />
       ) : (
@@ -365,6 +384,7 @@ export function SpotifyApp() {
   const albumCoverFileRef = useRef<HTMLInputElement | null>(null);
   const artistCoverFileRef = useRef<HTMLInputElement | null>(null);
   const mobileDetailsDragStart = useRef<number | null>(null);
+  const pendingAutoPlayRef = useRef(false);
   const [booting, setBooting] = useState(true);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const [libraryLoading, setLibraryLoading] = useState(false);
@@ -407,6 +427,7 @@ export function SpotifyApp() {
   const [isMobileView, setIsMobileView] = useState(false);
   const [recentPlayedIds, setRecentPlayedIds] = useState<string[]>([]);
   const [recentPlaylistIds, setRecentPlaylistIds] = useState<string[]>([]);
+  const [artistCovers, setArtistCovers] = useState<Record<string, string>>({});
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -531,9 +552,10 @@ export function SpotifyApp() {
     setLibraryLoading(true);
 
     try {
-      const [trackResult, playlistResult] = await Promise.all([
+      const [trackResult, playlistResult, artistCoverResult] = await Promise.all([
         apiFetch("/api/tracks", { cache: "no-store" }),
-        apiFetch("/api/playlists", { cache: "no-store" })
+        apiFetch("/api/playlists", { cache: "no-store" }),
+        apiFetch("/api/artists/cover?list=1", { cache: "no-store" })
       ]);
 
       if (trackResult.ok) {
@@ -544,6 +566,19 @@ export function SpotifyApp() {
       if (playlistResult.ok) {
         const data = await playlistResult.json();
         setPlaylists(data.playlists || []);
+      }
+
+      if (artistCoverResult.ok) {
+        const data = await artistCoverResult.json();
+        const covers: unknown[] = Array.isArray(data.covers) ? data.covers : [];
+
+        setArtistCovers(
+          Object.fromEntries(
+            covers
+              .filter(isArtistCoverPayload)
+              .map((cover) => [artistKey(cover.artist), cover.coverUrl])
+          )
+        );
       }
     } finally {
       setLibraryLoading(false);
@@ -669,6 +704,18 @@ export function SpotifyApp() {
     }
   }, [repeatMode]);
 
+  const requestAudioPlay = useCallback((audio = audioRef.current) => {
+    if (!audio) {
+      return;
+    }
+
+    audio.play().catch((error: DOMException) => {
+      if (error.name === "NotAllowedError") {
+        setIsPlaying(false);
+      }
+    });
+  }, []);
+
   useEffect(() => {
     const audio = audioRef.current;
 
@@ -677,11 +724,15 @@ export function SpotifyApp() {
     }
 
     if (isPlaying) {
-      audio.play().catch(() => setIsPlaying(false));
+      if (pendingAutoPlayRef.current) {
+        audio.load();
+      }
+
+      requestAudioPlay(audio);
     } else {
       audio.pause();
     }
-  }, [currentTrack, isPlaying]);
+  }, [currentTrack, isPlaying, requestAudioPlay]);
 
   useEffect(() => {
     if (!currentTrack) {
@@ -837,9 +888,14 @@ export function SpotifyApp() {
     });
 
     return [...artists.entries()]
-      .map(([name, artistTracks]) => ({ name, tracks: artistTracks, cover: artistTracks[0] }))
+      .map(([name, artistTracks]) => ({
+        name,
+        tracks: artistTracks,
+        cover: artistTracks[0],
+        coverUrl: artistCovers[artistKey(name)] || null
+      }))
       .sort((left, right) => left.name.localeCompare(right.name));
-  }, [allTracks]);
+  }, [allTracks, artistCovers]);
   const ownPlaylists = useMemo(
     () => playlists.filter((playlist) => playlist.ownerId === user?.id),
     [playlists, user?.id]
@@ -1192,6 +1248,7 @@ export function SpotifyApp() {
       return;
     }
 
+    pendingAutoPlayRef.current = true;
     playNext();
   }, [playNext, repeatMode]);
 
@@ -1542,6 +1599,7 @@ export function SpotifyApp() {
       setFollowedArtists(new Set());
       setRecentPlayedIds([]);
       setRecentPlaylistIds([]);
+      setArtistCovers({});
       setNotifications([]);
       setProfileOpen(false);
       setQueueOpen(false);
@@ -1766,7 +1824,12 @@ export function SpotifyApp() {
         throw new Error(data.error || "Could not update artist cover.");
       }
 
-      mergeTracksEverywhere(data.tracks || []);
+      if (data.artist?.coverUrl) {
+        setArtistCovers((existing) => ({
+          ...existing,
+          [artistKey(data.artist.name || selectedArtistName)]: data.artist.coverUrl
+        }));
+      }
       showToast("Artist cover updated.");
     } catch (error) {
       showToast((error as Error).message);
@@ -2025,6 +2088,7 @@ export function SpotifyApp() {
           ? "Artist"
           : "Collection";
   const collectionCoverTrack = selectedAlbumTracks[0] || selectedArtistTracks[0] || null;
+  const selectedArtistCoverUrl = selectedArtistName ? artistCovers[artistKey(selectedArtistName)] || null : null;
   const compactCollectionIcon = Boolean(search || ["songs", "podcasts", "recent", "most"].includes(view));
   const collectionAccent = selectedPlaylist
     ? safeHexColor(selectedPlaylist.coverColor, "#477875")
@@ -2050,11 +2114,22 @@ export function SpotifyApp() {
   return (
     <main className={`spotify-shell ${mobileLibraryOpen ? "mobile-library-open" : ""} ${mobileNowOpen ? "mobile-now-open" : ""}`}>
       <audio
+        onCanPlay={(event) => {
+          if (!pendingAutoPlayRef.current || !isPlaying || !currentTrack) {
+            return;
+          }
+
+          pendingAutoPlayRef.current = false;
+          requestAudioPlay(event.currentTarget);
+        }}
         onEnded={handleEnded}
+        onError={() => {
+          pendingAutoPlayRef.current = false;
+        }}
         onLoadedMetadata={(event) => setLoadedDuration(event.currentTarget.duration || currentTrack?.duration || 0)}
         onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
         playsInline
-        preload="metadata"
+        preload="auto"
         ref={audioRef}
         src={mediaUrl(currentTrack?.audioUrl) || undefined}
       />
@@ -2297,7 +2372,7 @@ export function SpotifyApp() {
                   onClick={() => selectView(collectionView("artist", artist.name))}
                   type="button"
                 >
-                  <Artwork circle track={artist.cover} size="sm" />
+                  <Artwork circle imageUrl={artist.coverUrl} track={artist.cover} size="sm" />
                   <span>
                     <strong>{artist.name}</strong>
                     <small>Following · {artist.tracks.length} songs</small>
@@ -2365,7 +2440,7 @@ export function SpotifyApp() {
                   onClick={() => selectView(collectionView("artist", artist.name))}
                   type="button"
                 >
-                  <Artwork circle track={artist.cover} size="sm" />
+                  <Artwork circle imageUrl={artist.coverUrl} track={artist.cover} size="sm" />
                   <span>
                     <strong>{artist.name}</strong>
                     <small>{isFollowing(artist.name) ? "Following" : "Artist"} · {artist.tracks.length} songs</small>
@@ -2582,7 +2657,12 @@ export function SpotifyApp() {
                   ) : selectedPlaylist ? (
                     <PlaylistArtwork hero playlist={selectedPlaylist} />
                   ) : selectedAlbumName || selectedArtistName ? (
-                    <Artwork circle={Boolean(selectedArtistName)} track={collectionCoverTrack} size="hero" />
+                    <Artwork
+                      circle={Boolean(selectedArtistName)}
+                      imageUrl={selectedArtistCoverUrl}
+                      track={collectionCoverTrack}
+                      size="hero"
+                    />
                   ) : (
                     <div className="collection-playlist-art">
                       <Search size={42} />
@@ -2737,6 +2817,17 @@ export function SpotifyApp() {
             </section>
           )}
         </section>
+
+        {detailsOpen && (
+          <div
+            aria-label="Resize now playing"
+            aria-orientation="vertical"
+            className="now-resizer"
+            onPointerDown={beginNowResize}
+            role="separator"
+            title="Resize now playing"
+          />
+        )}
 
         {detailsOpen && (
           <aside className="now-panel panel">

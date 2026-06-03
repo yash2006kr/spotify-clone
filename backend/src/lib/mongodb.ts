@@ -53,6 +53,7 @@ export async function ensureIndexes() {
         db.collection("likes").createIndex({ userId: 1, trackId: 1 }, { unique: true }),
         db.collection("playlists").createIndex({ ownerId: 1, updatedAt: -1 }),
         db.collection("playlists").createIndex({ isPublic: 1, updatedAt: -1 }),
+        db.collection("artistCovers").createIndex({ artistKey: 1 }, { unique: true }),
         db.collection("notifications").createIndex({ targetEmail: 1, createdAt: -1 }),
         db.collection("notifications").createIndex({ key: 1 }, { unique: true, sparse: true })
       ]);
