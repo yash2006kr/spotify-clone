@@ -54,18 +54,22 @@ export async function DELETE(_request: Request, context: RouteContext) {
     const db = await getDb();
     const trackObjectId = new ObjectId(id);
     const track = await db.collection("tracks").findOne({ _id: trackObjectId });
-
-    if (!track) {
-      return NextResponse.json({ error: "Track not found." }, { status: 404 });
-    }
-
-    await Promise.all([
-      db.collection("tracks").deleteOne({ _id: trackObjectId }),
+    const removeReferences = [
       db.collection("likes").deleteMany({ trackId: trackObjectId }),
       db.collection<PlaylistDocument>("playlists").updateMany(
         { trackIds: trackObjectId },
         { $pull: { trackIds: trackObjectId }, $set: { updatedAt: new Date() } }
-      ),
+      )
+    ];
+
+    if (!track) {
+      await Promise.all(removeReferences);
+      return NextResponse.json({ ok: true, missing: true });
+    }
+
+    await Promise.all([
+      db.collection("tracks").deleteOne({ _id: trackObjectId }),
+      ...removeReferences,
       deleteFile("audio", track.fileId),
       deleteTrackCoverIfUnused(track.coverId, trackObjectId)
     ]);

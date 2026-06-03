@@ -46,12 +46,15 @@ export async function ensureIndexes() {
 
       await Promise.all([
         db.collection("users").createIndex({ email: 1 }, { unique: true }),
+        db.collection("users").createIndex({ name: 1 }),
         db.collection("tracks").createIndex({ title: "text", artist: "text", album: "text", genre: "text" }),
         db.collection("tracks").createIndex({ createdAt: -1 }),
         db.collection("tracks").createIndex({ plays: -1 }),
         db.collection("likes").createIndex({ userId: 1, trackId: 1 }, { unique: true }),
         db.collection("playlists").createIndex({ ownerId: 1, updatedAt: -1 }),
-        db.collection("playlists").createIndex({ isPublic: 1, updatedAt: -1 })
+        db.collection("playlists").createIndex({ isPublic: 1, updatedAt: -1 }),
+        db.collection("notifications").createIndex({ targetEmail: 1, createdAt: -1 }),
+        db.collection("notifications").createIndex({ key: 1 }, { unique: true, sparse: true })
       ]);
     })();
   }

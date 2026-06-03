@@ -19,6 +19,7 @@ export type Track = {
   createdAt: string;
   audioUrl: string;
   coverUrl: string | null;
+  missing?: boolean;
 };
 
 export type Playlist = {
@@ -34,4 +35,12 @@ export type Playlist = {
   createdAt: string;
   updatedAt: string;
   tracks?: Track[];
+};
+
+export type AppNotification = {
+  id: string;
+  title: string;
+  message: string;
+  targetEmail: string | null;
+  createdAt: string;
 };

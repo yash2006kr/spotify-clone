@@ -13,6 +13,7 @@ import {
   useState
 } from "react";
 import {
+  ArrowLeft,
   Bell,
   Clock3,
   Disc3,
@@ -46,7 +47,7 @@ import {
 
 import { AuthScreen } from "@/components/AuthScreen";
 import { apiFetch, clearSessionToken, mediaUrl } from "@/lib/api";
-import type { AppUser, Playlist, Track } from "@/types";
+import type { AppNotification, AppUser, Playlist, Track } from "@/types";
 
 type ViewState =
   | "home"
@@ -75,6 +76,14 @@ const gradients = [
   "linear-gradient(135deg, #f96d00 0%, #f2f2f2 45%, #222 100%)",
   "linear-gradient(135deg, #86efac 0%, #1d4ed8 100%)"
 ];
+const accentColors = ["#477875", "#714f86", "#806f42", "#426d8c", "#7a5a4a", "#416d55", "#6b4f7d", "#5d6b42"];
+const loadingMessages = [
+  "Tuning the room before the first track lands.",
+  "Dusting off album covers and lining up the queue.",
+  "Finding the tiny groove between login and library.",
+  "Warming up playlists, likes, and the good stuff.",
+  "Checking the stage lights for your next song."
+];
 const spotifyLogoSrc = "/spotify-logo.jpeg";
 
 function hashValue(value: string) {
@@ -83,6 +92,10 @@ function hashValue(value: string) {
 
 function gradientFor(id: string) {
   return gradients[hashValue(id) % gradients.length];
+}
+
+function accentFor(id: string) {
+  return accentColors[hashValue(id || "collection") % accentColors.length];
 }
 
 function collectionView(kind: "album" | "artist", value: string): ViewState {
@@ -126,6 +139,10 @@ function formatTime(seconds: number) {
   return `${minutes}:${remaining}`;
 }
 
+function isMissingTrack(track: Track) {
+  return Boolean(track.missing);
+}
+
 function newestFirst(tracks: Track[]) {
   return [...tracks].sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
 }
@@ -144,6 +161,10 @@ function uniqueTracks(tracks: Track[]) {
 
 function isPodcastTrack(track: Track) {
   return [track.title, track.album, track.genre].some((value) => value.toLowerCase().includes("podcast"));
+}
+
+function trackMatchesQuery(track: Track, query: string) {
+  return [track.title, track.artist, track.album, track.genre].some((value) => value.toLowerCase().includes(query));
 }
 
 function shuffledTracks(tracks: Track[]) {
@@ -227,6 +248,26 @@ function loadFollowedArtists(userId: string) {
     return new Set(names.filter((name) => typeof name === "string"));
   } catch {
     return new Set<string>();
+  }
+}
+
+function loadIdList(key: string) {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const saved = window.localStorage.getItem(key);
+    const ids = saved ? (JSON.parse(saved) as unknown[]) : [];
+    return ids.filter((id): id is string => typeof id === "string");
+  } catch {
+    return [];
+  }
+}
+
+function saveIdList(key: string, ids: string[]) {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(key, JSON.stringify(ids));
   }
 }
 
@@ -322,13 +363,16 @@ export function SpotifyApp() {
   const playlistCoverFileRef = useRef<HTMLInputElement | null>(null);
   const selectedPlaylistCoverFileRef = useRef<HTMLInputElement | null>(null);
   const albumCoverFileRef = useRef<HTMLInputElement | null>(null);
+  const artistCoverFileRef = useRef<HTMLInputElement | null>(null);
   const mobileDetailsDragStart = useRef<number | null>(null);
   const [booting, setBooting] = useState(true);
+  const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [user, setUser] = useState<AppUser | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [view, setView] = useState<ViewState>("home");
+  const [lastView, setLastView] = useState<ViewState | null>(null);
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
   const [search, setSearch] = useState("");
   const [searchResults, setSearchResults] = useState<Track[] | null>(null);
@@ -350,6 +394,7 @@ export function SpotifyApp() {
   const [playlistSaving, setPlaylistSaving] = useState(false);
   const [playlistCoverSaving, setPlaylistCoverSaving] = useState(false);
   const [albumCoverSaving, setAlbumCoverSaving] = useState(false);
+  const [artistCoverSaving, setArtistCoverSaving] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
@@ -359,6 +404,11 @@ export function SpotifyApp() {
   const [mobileLibraryOpen, setMobileLibraryOpen] = useState(false);
   const [mobileNowOpen, setMobileNowOpen] = useState(false);
   const [librarySearch, setLibrarySearch] = useState("");
+  const [isMobileView, setIsMobileView] = useState(false);
+  const [recentPlayedIds, setRecentPlayedIds] = useState<string[]>([]);
+  const [recentPlaylistIds, setRecentPlaylistIds] = useState<string[]>([]);
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [isInstalled, setIsInstalled] = useState(
     () => typeof window !== "undefined" && window.matchMedia?.("(display-mode: standalone)").matches
@@ -370,6 +420,13 @@ export function SpotifyApp() {
     }
 
     return clamp(Number(window.localStorage.getItem("spotify:library-width")) || 330, 240, 520);
+  });
+  const [nowPanelWidth, setNowPanelWidth] = useState(() => {
+    if (typeof window === "undefined") {
+      return 380;
+    }
+
+    return clamp(Number(window.localStorage.getItem("spotify:now-width")) || 380, 300, 520);
   });
   const [followedArtists, setFollowedArtists] = useState<Set<string>>(() => new Set());
   const [uploadForm, setUploadForm] = useState({
@@ -394,8 +451,16 @@ export function SpotifyApp() {
     window.setTimeout(() => setToast(""), 2600);
   }, []);
 
+  const activateUser = useCallback((nextUser: AppUser) => {
+    setFollowedArtists(loadFollowedArtists(nextUser.id));
+    setRecentPlayedIds(loadIdList(`spotify:recent-tracks:${nextUser.id}`).slice(0, 12));
+    setRecentPlaylistIds(loadIdList(`spotify:recent-playlists:${nextUser.id}`).slice(0, 8));
+    setUser(nextUser);
+  }, []);
+
   const resetHomeView = useCallback(() => {
     setView("home");
+    setLastView(null);
     setSearch("");
     setSearchResults(null);
     setSearchLoading(false);
@@ -434,10 +499,23 @@ export function SpotifyApp() {
   }, []);
 
   const selectView = useCallback((nextView: ViewState) => {
+    setLastView(view);
     setView(nextView);
+    setSearch("");
+    setSearchResults(null);
+    setSearchLoading(false);
     setMobileLibraryOpen(false);
     setMobileNowOpen(false);
-  }, []);
+
+    if (nextView.startsWith("playlist:") && user) {
+      const playlistId = nextView.slice("playlist:".length);
+      setRecentPlaylistIds((existing) => {
+        const next = [playlistId, ...existing.filter((id) => id !== playlistId)].slice(0, 8);
+        saveIdList(`spotify:recent-playlists:${user.id}`, next);
+        return next;
+      });
+    }
+  }, [user, view]);
 
   const openUpload = useCallback((playlistId?: string | null) => {
     setUploadTargetPlaylistId(playlistId || null);
@@ -472,6 +550,30 @@ export function SpotifyApp() {
     }
   }, []);
 
+  const loadNotifications = useCallback(async () => {
+    setNotificationsLoading(true);
+
+    try {
+      const result = await apiFetch("/api/notifications", { cache: "no-store" });
+      const data = await result.json().catch(() => ({}));
+
+      if (!result.ok) {
+        showToast(data.error || "Could not load notifications.");
+        return;
+      }
+
+      setNotifications(data.notifications || []);
+    } finally {
+      setNotificationsLoading(false);
+    }
+  }, [showToast]);
+
+  const openNotifications = useCallback(() => {
+    setActivityOpen(true);
+    setProfileOpen(false);
+    loadNotifications().catch(() => showToast("Could not load notifications."));
+  }, [loadNotifications, showToast]);
+
   useEffect(() => {
     if ("serviceWorker" in navigator) {
       navigator.serviceWorker.register("/sw.js").catch(() => undefined);
@@ -498,6 +600,19 @@ export function SpotifyApp() {
   }, []);
 
   useEffect(() => {
+    if (!booting) {
+      return;
+    }
+
+    const timer = window.setInterval(
+      () => setLoadingMessageIndex((index) => (index + 1) % loadingMessages.length),
+      1700
+    );
+
+    return () => window.clearInterval(timer);
+  }, [booting]);
+
+  useEffect(() => {
     let active = true;
 
     apiFetch("/api/auth/me", { cache: "no-store" })
@@ -508,8 +623,7 @@ export function SpotifyApp() {
 
         if (result.ok) {
           const data = await result.json();
-          setFollowedArtists(loadFollowedArtists(data.user.id));
-          setUser(data.user);
+          activateUser(data.user);
           loadLibrary().catch(() => showToast("Could not refresh the library."));
         }
       })
@@ -523,11 +637,25 @@ export function SpotifyApp() {
     return () => {
       active = false;
     };
-  }, [loadLibrary, showToast]);
+  }, [activateUser, loadLibrary, showToast]);
 
   useEffect(() => {
     window.localStorage.setItem("spotify:library-width", String(libraryWidth));
   }, [libraryWidth]);
+
+  useEffect(() => {
+    window.localStorage.setItem("spotify:now-width", String(nowPanelWidth));
+  }, [nowPanelWidth]);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 980px)");
+    const updateViewport = () => setIsMobileView(query.matches);
+
+    updateViewport();
+    query.addEventListener("change", updateViewport);
+
+    return () => query.removeEventListener("change", updateViewport);
+  }, []);
 
   useEffect(() => {
     if (audioRef.current) {
@@ -572,11 +700,7 @@ export function SpotifyApp() {
       return newestFirst(tracks);
     }
 
-    return newestFirst(
-      tracks.filter((track) =>
-        [track.title, track.artist, track.album, track.genre].some((value) => value.toLowerCase().includes(query))
-      )
-    );
+    return newestFirst(tracks.filter((track) => trackMatchesQuery(track, query)));
   }, [search, tracks]);
 
   useEffect(() => {
@@ -654,8 +778,10 @@ export function SpotifyApp() {
           existing.map((item) => (item.id === playlist.id ? { ...item, ...playlist } : item))
         );
 
-        if (playlist.tracks?.length) {
-          setTracks((existing) => uniqueTracks([...playlist.tracks!, ...existing]));
+        const playlistTracks = (playlist.tracks || []).filter((track) => !isMissingTrack(track));
+
+        if (playlistTracks.length) {
+          setTracks((existing) => uniqueTracks([...playlistTracks, ...existing]));
         }
       })
       .catch(() => undefined);
@@ -753,8 +879,63 @@ export function SpotifyApp() {
     [libraryArtists, libraryQuery]
   );
   const podcastTracks = useMemo(() => allTracks.filter(isPodcastTrack), [allTracks]);
-  const searchTracks = search.trim() ? searchResults ?? filteredTracks : filteredTracks;
   const allTopTracks = useMemo(() => [...tracks].sort((a, b) => b.plays - a.plays), [tracks]);
+  const scopedSearchBase = useMemo(() => {
+    if (selectedPlaylist) {
+      return selectedPlaylistTracks;
+    }
+
+    if (selectedAlbumName) {
+      return selectedAlbumTracks;
+    }
+
+    if (selectedArtistName) {
+      return selectedArtistTracks;
+    }
+
+    if (view === "liked") {
+      return likedTracks;
+    }
+
+    if (view === "songs" || view === "recent") {
+      return allTracks;
+    }
+
+    if (view === "podcasts") {
+      return podcastTracks;
+    }
+
+    if (view === "most") {
+      return allTopTracks;
+    }
+
+    return null;
+  }, [
+    allTopTracks,
+    allTracks,
+    likedTracks,
+    podcastTracks,
+    selectedAlbumName,
+    selectedAlbumTracks,
+    selectedArtistName,
+    selectedArtistTracks,
+    selectedPlaylist,
+    selectedPlaylistTracks,
+    view
+  ]);
+  const searchTracks = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    if (!query) {
+      return filteredTracks;
+    }
+
+    if (scopedSearchBase) {
+      return newestFirst(scopedSearchBase.filter((track) => trackMatchesQuery(track, query)));
+    }
+
+    return searchResults ?? filteredTracks;
+  }, [filteredTracks, scopedSearchBase, search, searchResults]);
 
   const activeTracks = useMemo(() => {
     if (search.trim()) {
@@ -810,25 +991,37 @@ export function SpotifyApp() {
     selectedPlaylistTracks,
     view
   ]);
+  const playableActiveTracks = useMemo(() => activeTracks.filter((track) => !isMissingTrack(track)), [activeTracks]);
 
   const recentTracks = useMemo(() => allTracks.slice(0, 12), [allTracks]);
-  const visibleRecentTracks = useMemo(
-    () =>
-      recentTracks.filter(
-        (track) =>
-          !libraryQuery ||
-          [track.title, track.artist, track.album, track.genre].some((value) =>
-            value.toLowerCase().includes(libraryQuery)
-          )
-      ),
-    [libraryQuery, recentTracks]
-  );
   const topTracks = useMemo(() => allTopTracks.slice(0, 12), [allTopTracks]);
   const uploadedMix = useMemo(() => uniqueTracks([...likedTracks, ...topTracks, ...recentTracks]).slice(0, 12), [
     likedTracks,
     recentTracks,
     topTracks
   ]);
+  const recentlyPlayedTracks = useMemo(() => {
+    const ordered = recentPlayedIds
+      .map((id) => tracks.find((track) => track.id === id))
+      .filter((track): track is Track => Boolean(track));
+
+    return ordered.length ? ordered : recentTracks;
+  }, [recentPlayedIds, recentTracks, tracks]);
+  const recentLibraryPlaylists = useMemo(
+    () =>
+      recentPlaylistIds
+        .map((id) => playlists.find((playlist) => playlist.id === id))
+        .filter((playlist): playlist is Playlist => Boolean(playlist)),
+    [playlists, recentPlaylistIds]
+  );
+  const followedLibraryArtists = useMemo(
+    () => libraryArtists.filter((artist) => followedArtists.has(artist.name.trim().toLowerCase())),
+    [followedArtists, libraryArtists]
+  );
+  const homeQuickTracks = recentlyPlayedTracks.slice(0, isMobileView ? 2 : 4);
+  const homeJumpTracks = uploadedMix.slice(0, isMobileView ? 1 : 3);
+  const homeRecentTracks = recentlyPlayedTracks.slice(0, isMobileView ? 1 : 3);
+  const homeTopTracks = topTracks.slice(0, isMobileView ? 1 : 3);
 
   const nextQueueTracks = useMemo(() => {
     const fromPlayback = playbackList.slice(playbackIndex + 1, playbackIndex + 6);
@@ -866,8 +1059,21 @@ export function SpotifyApp() {
   }, []);
 
   const playTrack = useCallback((track: Track, source: Track[] = activeTracks) => {
+    if (isMissingTrack(track)) {
+      showToast("This song was already removed. Use delete to clean it from playlists.");
+      return;
+    }
+
     const list = source.length ? source : [track];
     const index = Math.max(0, list.findIndex((item) => item.id === track.id));
+
+    if (user) {
+      setRecentPlayedIds((existing) => {
+        const next = [track.id, ...existing.filter((id) => id !== track.id)].slice(0, 12);
+        saveIdList(`spotify:recent-tracks:${user.id}`, next);
+        return next;
+      });
+    }
 
     setPlaybackList(list);
     setPlaybackIndex(index);
@@ -875,7 +1081,7 @@ export function SpotifyApp() {
     setLoadedDuration(track.duration || 0);
     setCurrentTime(0);
     setIsPlaying(true);
-  }, [activeTracks]);
+  }, [activeTracks, showToast, user]);
 
   const playShuffled = useCallback(
     (source: Track[] = activeTracks) => {
@@ -944,18 +1150,18 @@ export function SpotifyApp() {
       return;
     }
 
-    if (repeatMode === "all" && playbackList.length) {
-      const next = playbackList[0];
+    const fallbackList = playbackList.length ? playbackList : tracks;
+    const next = fallbackList[0];
+
+    if (next) {
+      setPlaybackList(fallbackList);
       setPlaybackIndex(0);
       setCurrentTrack(next);
       setLoadedDuration(next.duration || 0);
       setCurrentTime(0);
       setIsPlaying(true);
-      return;
     }
-
-    setIsPlaying(false);
-  }, [manualQueue, playFromManualQueue, playTrack, playbackIndex, playbackList, repeatMode, shuffleOn, tracks]);
+  }, [manualQueue, playFromManualQueue, playTrack, playbackIndex, playbackList, shuffleOn, tracks]);
 
   const playPrevious = useCallback(() => {
     const audio = audioRef.current;
@@ -1077,6 +1283,11 @@ export function SpotifyApp() {
 
   const toggleLike = useCallback(
     async (track: Track) => {
+      if (isMissingTrack(track)) {
+        showToast("This deleted song cannot be liked.");
+        return;
+      }
+
       const nextLiked = !track.liked;
       updateTrackEverywhere(track.id, (item) => ({ ...item, liked: nextLiked }));
 
@@ -1114,6 +1325,15 @@ export function SpotifyApp() {
           tracks: playlist.tracks?.filter((item) => item.id !== track.id)
         }))
       );
+      setRecentPlayedIds((existing) => {
+        const next = existing.filter((id) => id !== track.id);
+
+        if (user) {
+          saveIdList(`spotify:recent-tracks:${user.id}`, next);
+        }
+
+        return next;
+      });
       setManualQueue((existing) => existing.filter((item) => item.id !== track.id));
       setPlaybackList((existing) => existing.filter((item) => item.id !== track.id));
       setPlaybackIndex(0);
@@ -1126,11 +1346,16 @@ export function SpotifyApp() {
 
       showToast(`Deleted "${track.title}".`);
     },
-    [currentTrack, showToast]
+    [currentTrack, showToast, user]
   );
 
   const addToQueue = useCallback(
     (track: Track) => {
+      if (isMissingTrack(track)) {
+        showToast("This deleted song cannot be queued.");
+        return;
+      }
+
       setManualQueue((existing) => [...existing, track]);
       setQueueOpen(true);
       showToast(`Added "${track.title}" to queue.`);
@@ -1140,7 +1365,7 @@ export function SpotifyApp() {
 
   const addToPlaylist = useCallback(
     async (playlistId: string, track: Track) => {
-      if (!playlistId) {
+      if (!playlistId || isMissingTrack(track)) {
         return;
       }
 
@@ -1237,6 +1462,34 @@ export function SpotifyApp() {
     [libraryWidth]
   );
 
+  const beginNowResize = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const startX = event.clientX;
+      const startWidth = nowPanelWidth;
+      const previousCursor = document.body.style.cursor;
+      const previousUserSelect = document.body.style.userSelect;
+
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+
+      const handlePointerMove = (moveEvent: PointerEvent) => {
+        setNowPanelWidth(clamp(startWidth - (moveEvent.clientX - startX), 300, 520));
+      };
+
+      const handlePointerUp = () => {
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousUserSelect;
+        window.removeEventListener("pointermove", handlePointerMove);
+        window.removeEventListener("pointerup", handlePointerUp);
+      };
+
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", handlePointerUp, { once: true });
+    },
+    [nowPanelWidth]
+  );
+
   const toggleFollow = useCallback(
     (artistName: string) => {
       const name = artistName.trim();
@@ -1287,6 +1540,9 @@ export function SpotifyApp() {
       setLibrarySearch("");
       setUploadTargetPlaylistId(null);
       setFollowedArtists(new Set());
+      setRecentPlayedIds([]);
+      setRecentPlaylistIds([]);
+      setNotifications([]);
       setProfileOpen(false);
       setQueueOpen(false);
       setMobileNowOpen(false);
@@ -1486,6 +1742,42 @@ export function SpotifyApp() {
     }
   }
 
+  async function handleArtistCoverChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+
+    if (!file || !selectedArtistName) {
+      return;
+    }
+
+    setArtistCoverSaving(true);
+
+    try {
+      const formData = new FormData();
+      formData.append("artist", selectedArtistName);
+      formData.append("cover", file);
+
+      const result = await apiFetch("/api/artists/cover", {
+        method: "PATCH",
+        body: formData
+      });
+      const data = await result.json();
+
+      if (!result.ok) {
+        throw new Error(data.error || "Could not update artist cover.");
+      }
+
+      mergeTracksEverywhere(data.tracks || []);
+      showToast("Artist cover updated.");
+    } catch (error) {
+      showToast((error as Error).message);
+    } finally {
+      setArtistCoverSaving(false);
+      if (artistCoverFileRef.current) {
+        artistCoverFileRef.current.value = "";
+      }
+    }
+  }
+
   async function handlePlaylistVisibility(isPublic: boolean) {
     if (!selectedPlaylist || !selectedPlaylistOwned) {
       return;
@@ -1618,6 +1910,22 @@ export function SpotifyApp() {
     setRepeatMode((current) => (current === "off" ? "all" : current === "all" ? "one" : "off"));
   }
 
+  function handleBackNavigation() {
+    setSearch("");
+    setSearchResults(null);
+    setSearchLoading(false);
+    setMobileNowOpen(false);
+    setMobileLibraryOpen(false);
+
+    if (lastView && lastView !== view) {
+      setView(lastView);
+      setLastView(null);
+      return;
+    }
+
+    resetHomeView();
+  }
+
   function beginMobileNowDrag(event: ReactPointerEvent<HTMLDivElement>) {
     mobileDetailsDragStart.current = event.clientY;
   }
@@ -1644,6 +1952,7 @@ export function SpotifyApp() {
           <SplashLogo />
         </div>
         <Loader2 className="spin" size={28} />
+        <p className="splash-copy">{loadingMessages[loadingMessageIndex]}</p>
       </main>
     );
   }
@@ -1652,8 +1961,7 @@ export function SpotifyApp() {
     return (
       <AuthScreen
         onAuthenticated={(nextUser) => {
-          setFollowedArtists(loadFollowedArtists(nextUser.id));
-          setUser(nextUser);
+          activateUser(nextUser);
           loadLibrary().catch(() => showToast("Could not refresh the library."));
         }}
       />
@@ -1710,14 +2018,27 @@ export function SpotifyApp() {
           ? "Artist"
           : "Collection";
   const collectionCoverTrack = selectedAlbumTracks[0] || selectedArtistTracks[0] || null;
-  const collectionAccent = safeHexColor(selectedPlaylist?.coverColor, "#1ed760");
-  const collectionStyle = selectedPlaylist
-    ? ({
-        "--collection-accent": collectionAccent,
-        "--collection-accent-soft": hexToRgba(collectionAccent, 0.38)
-      } as CSSProperties)
-    : undefined;
-  const gridStyle = { "--library-width": `${libraryWidth}px` } as CSSProperties;
+  const compactCollectionIcon = Boolean(search || ["songs", "podcasts", "recent", "most"].includes(view));
+  const collectionAccent = selectedPlaylist
+    ? safeHexColor(selectedPlaylist.coverColor, "#477875")
+    : view === "liked"
+      ? "#6f45ff"
+      : collectionCoverTrack
+        ? accentFor(collectionCoverTrack.id)
+        : search
+          ? "#475569"
+          : view === "podcasts"
+            ? "#416d55"
+            : "#477875";
+  const collectionStyle = {
+    "--collection-accent": collectionAccent,
+    "--collection-accent-soft": hexToRgba(collectionAccent, compactCollectionIcon ? 0.22 : 0.48),
+    "--collection-accent-mid": hexToRgba(collectionAccent, 0.22)
+  } as CSSProperties;
+  const gridStyle = {
+    "--library-width": `${libraryWidth}px`,
+    "--now-width": `${nowPanelWidth}px`
+  } as CSSProperties;
 
   return (
     <main className={`spotify-shell ${mobileLibraryOpen ? "mobile-library-open" : ""} ${mobileNowOpen ? "mobile-now-open" : ""}`}>
@@ -1752,7 +2073,7 @@ export function SpotifyApp() {
         </IconButton>
 
         {!isInstalled && (
-          <IconButton label="Install app" onClick={handleInstallApp} className="install-icon-button">
+          <IconButton label="Install" onClick={handleInstallApp} className="install-icon-button">
             <Download size={19} />
           </IconButton>
         )}
@@ -1769,11 +2090,17 @@ export function SpotifyApp() {
                 setSearchLoading(false);
               }
 
-              setView("home");
+              if (nextSearch.trim()) {
+                setLastView(view);
+              }
+
+              if (view === "home") {
+                setView("home");
+              }
               setMobileLibraryOpen(false);
               setMobileNowOpen(false);
             }}
-            placeholder="What do you want to play?"
+            placeholder={isMobileView ? "What to play?" : "What do you want to play?"}
             type="search"
             value={search}
           />
@@ -1796,10 +2123,7 @@ export function SpotifyApp() {
           )}
           <IconButton
             label="Notifications"
-            onClick={() => {
-              setActivityOpen(true);
-              setProfileOpen(false);
-            }}
+            onClick={openNotifications}
           >
             <Bell size={20} />
           </IconButton>
@@ -1958,7 +2282,41 @@ export function SpotifyApp() {
               </button>
             )}
 
-            {(libraryFilter === "all" || libraryFilter === "playlists") &&
+            {libraryFilter === "all" &&
+              followedLibraryArtists.map((artist) => (
+                <button
+                  className={`library-item ${selectedArtistName === artist.name ? "selected" : ""}`}
+                  key={`followed-${artist.name}`}
+                  onClick={() => selectView(collectionView("artist", artist.name))}
+                  type="button"
+                >
+                  <Artwork circle track={artist.cover} size="sm" />
+                  <span>
+                    <strong>{artist.name}</strong>
+                    <small>Following · {artist.tracks.length} songs</small>
+                  </span>
+                </button>
+              ))}
+
+            {libraryFilter === "all" &&
+              recentLibraryPlaylists.slice(0, 5).map((playlist) => (
+                <button
+                  className={`library-item ${view === `playlist:${playlist.id}` ? "selected" : ""}`}
+                  key={`recent-playlist-${playlist.id}`}
+                  onClick={() => selectView(`playlist:${playlist.id}`)}
+                  type="button"
+                >
+                  <PlaylistArtwork playlist={playlist} />
+                  <span>
+                    <strong>{playlist.name}</strong>
+                    <small>
+                      Recent {playlist.isPublic ? "public" : "private"} playlist · {playlist.trackIds.length} songs
+                    </small>
+                  </span>
+                </button>
+              ))}
+
+            {libraryFilter === "playlists" &&
               visiblePlaylists.map((playlist) => (
                 <button
                   className={`library-item ${view === `playlist:${playlist.id}` ? "selected" : ""}`}
@@ -2004,25 +2362,6 @@ export function SpotifyApp() {
                   <span>
                     <strong>{artist.name}</strong>
                     <small>{isFollowing(artist.name) ? "Following" : "Artist"} · {artist.tracks.length} songs</small>
-                  </span>
-                </button>
-              ))}
-
-            {libraryFilter === "all" &&
-              visibleRecentTracks.map((track) => (
-                <button
-                  className="library-item"
-                  key={track.id}
-                  onClick={() => {
-                    setMobileLibraryOpen(false);
-                    playTrack(track, recentTracks);
-                  }}
-                  type="button"
-                >
-                  <Artwork track={track} size="sm" />
-                  <span>
-                    <strong>{track.title}</strong>
-                    <small>{track.artist}</small>
                   </span>
                 </button>
               ))}
@@ -2131,8 +2470,13 @@ export function SpotifyApp() {
         </section>
 
         <section className="main-panel panel">
-          <div className="hero-band">
+          <div className={`hero-band ${view === "home" && !search ? "home-hero" : "collection-nav"}`}>
             <div className="hero-tabs">
+              {(view !== "home" || search) && (
+                <IconButton label="Back" onClick={handleBackNavigation} className="back-button">
+                  <ArrowLeft size={20} />
+                </IconButton>
+              )}
               <button
                 className={view === "home" && !search ? "active" : ""}
                 onClick={resetHomeView}
@@ -2173,25 +2517,13 @@ export function SpotifyApp() {
                   <span>Liked Songs</span>
                 </button>
 
-                <button className="quick-tile" onClick={() => openUpload()} type="button">
+                <button className="quick-tile upload-quick-tile" onClick={() => openUpload()} type="button">
                   <PlaylistArtwork add />
                   <span>Add songs</span>
                 </button>
 
-                {playlists.slice(0, 4).map((playlist) => (
-                  <button
-                    className="quick-tile"
-                    key={playlist.id}
-                    onClick={() => selectView(`playlist:${playlist.id}`)}
-                    type="button"
-                  >
-                    <PlaylistArtwork playlist={playlist} />
-                    <span>{playlist.name}</span>
-                  </button>
-                ))}
-
-                {recentTracks.slice(0, Math.max(0, 6 - playlists.length)).map((track) => (
-                  <button className="quick-tile" key={track.id} onClick={() => playTrack(track, recentTracks)} type="button">
+                {homeQuickTracks.map((track) => (
+                  <button className="quick-tile" key={track.id} onClick={() => playTrack(track, recentlyPlayedTracks)} type="button">
                     <Artwork track={track} size="sm" />
                     <span>{track.title}</span>
                   </button>
@@ -2204,7 +2536,7 @@ export function SpotifyApp() {
             <>
               <Shelf
                 title="Jump back in"
-                tracks={uploadedMix}
+                tracks={homeJumpTracks}
                 onPlay={playTrack}
                 onQueue={addToQueue}
                 onLike={toggleLike}
@@ -2214,7 +2546,7 @@ export function SpotifyApp() {
               />
               <Shelf
                 title="Recents"
-                tracks={recentTracks}
+                tracks={homeRecentTracks}
                 onPlay={playTrack}
                 onQueue={addToQueue}
                 onLike={toggleLike}
@@ -2224,7 +2556,7 @@ export function SpotifyApp() {
               />
               <Shelf
                 title="Most played"
-                tracks={topTracks}
+                tracks={homeTopTracks}
                 onPlay={playTrack}
                 onQueue={addToQueue}
                 onLike={toggleLike}
@@ -2235,32 +2567,43 @@ export function SpotifyApp() {
             </>
           ) : (
             <section
-              className={`collection-view ${selectedPlaylist ? "playlist-collection" : ""}`}
+              className={`collection-view ${compactCollectionIcon ? "compact-collection" : "cover-collection"}`}
               style={collectionStyle}
             >
-              <div className="collection-header">
-                {view === "liked" ? (
-                  <Artwork liked size="hero" />
-                ) : selectedPlaylist ? (
-                  <PlaylistArtwork hero playlist={selectedPlaylist} />
-                ) : selectedAlbumName || selectedArtistName ? (
-                  <Artwork circle={Boolean(selectedArtistName)} track={collectionCoverTrack} size="hero" />
-                ) : (
-                  <div className="collection-playlist-art">
-                    <Search size={72} />
-                  </div>
+              <div className={`collection-header ${compactCollectionIcon ? "compact-header" : ""}`}>
+                {!compactCollectionIcon && (
+                  view === "liked" ? (
+                    <Artwork liked size="hero" />
+                  ) : selectedPlaylist ? (
+                    <PlaylistArtwork hero playlist={selectedPlaylist} />
+                  ) : selectedAlbumName || selectedArtistName ? (
+                    <Artwork circle={Boolean(selectedArtistName)} track={collectionCoverTrack} size="hero" />
+                  ) : (
+                    <div className="collection-playlist-art">
+                      <Search size={42} />
+                    </div>
+                  )
                 )}
                 <div>
                   <span className="collection-kicker">
                     {activeKicker}
                   </span>
-                  <h1>{activeTitle}</h1>
+                  <div className="collection-title-row">
+                    {compactCollectionIcon && (
+                      <span className="collection-title-icon">
+                        <Search size={24} />
+                      </span>
+                    )}
+                    <h1>{activeTitle}</h1>
+                  </div>
                   <p>{activeSubtitle}</p>
                   <div className="collection-actions">
                     <button
                       className="round-play"
-                      disabled={!activeTracks.length}
-                      onClick={() => activeTracks[0] && playTrack(activeTracks[0], activeTracks)}
+                      disabled={!playableActiveTracks.length}
+                      onClick={() =>
+                        playableActiveTracks[0] && playTrack(playableActiveTracks[0], playableActiveTracks)
+                      }
                       type="button"
                     >
                       <Play fill="currentColor" size={24} />
@@ -2268,9 +2611,9 @@ export function SpotifyApp() {
                     <IconButton
                       active={shuffleOn}
                       className="collection-shuffle"
-                      disabled={!activeTracks.length}
+                      disabled={!playableActiveTracks.length}
                       label="Shuffle collection"
-                      onClick={() => playShuffled(activeTracks)}
+                      onClick={() => playShuffled(playableActiveTracks)}
                     >
                       <Shuffle size={22} />
                     </IconButton>
@@ -2290,7 +2633,7 @@ export function SpotifyApp() {
                           type="button"
                         >
                           {playlistCoverSaving ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
-                          Cover
+                          Edit cover
                         </button>
                         <input
                           accept="image/*"
@@ -2322,7 +2665,7 @@ export function SpotifyApp() {
                           type="button"
                         >
                           {albumCoverSaving ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
-                          Cover
+                          Edit cover
                         </button>
                         <input
                           accept="image/*"
@@ -2334,14 +2677,32 @@ export function SpotifyApp() {
                       </>
                     )}
                     {selectedArtistName && (
-                      <button
-                        className={`ghost-button ${isFollowing(selectedArtistName) ? "active" : ""}`}
-                        onClick={() => toggleFollow(selectedArtistName)}
-                        type="button"
-                      >
-                        <UserRound size={17} />
-                        {isFollowing(selectedArtistName) ? "Following" : "Follow"}
-                      </button>
+                      <>
+                        <button
+                          className="ghost-button"
+                          disabled={artistCoverSaving}
+                          onClick={() => artistCoverFileRef.current?.click()}
+                          type="button"
+                        >
+                          {artistCoverSaving ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
+                          Edit cover
+                        </button>
+                        <input
+                          accept="image/*"
+                          className="sr-only-file"
+                          onChange={handleArtistCoverChange}
+                          ref={artistCoverFileRef}
+                          type="file"
+                        />
+                        <button
+                          className={`ghost-button ${isFollowing(selectedArtistName) ? "active" : ""}`}
+                          onClick={() => toggleFollow(selectedArtistName)}
+                          type="button"
+                        >
+                          <UserRound size={17} />
+                          {isFollowing(selectedArtistName) ? "Following" : "Follow"}
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>
@@ -2365,7 +2726,7 @@ export function SpotifyApp() {
                 onQueue={addToQueue}
                 onRemove={selectedPlaylist && selectedPlaylistOwned ? removeFromPlaylist : undefined}
                 playlists={ownPlaylists}
-                source={activeTracks}
+                source={playableActiveTracks}
                 tracks={activeTracks}
               />
             </section>
@@ -2526,10 +2887,7 @@ export function SpotifyApp() {
           <div className="mobile-action-icons">
             <IconButton
               label="Notifications"
-              onClick={() => {
-                setActivityOpen(true);
-                setProfileOpen(false);
-              }}
+              onClick={openNotifications}
             >
               <Bell size={20} />
             </IconButton>
@@ -2805,11 +3163,32 @@ export function SpotifyApp() {
 
       {activityOpen && (
         <Modal title="Notifications" onClose={() => setActivityOpen(false)}>
-          <div className="utility-panel">
-            <Bell size={32} />
-            <h3>No new notifications</h3>
-            <p>Uploads, playlist changes, and account activity will appear here.</p>
-          </div>
+          {notificationsLoading ? (
+            <div className="utility-panel">
+              <Loader2 className="spin" size={32} />
+              <h3>Loading notifications</h3>
+              <p>Checking account updates and shared announcements.</p>
+            </div>
+          ) : notifications.length ? (
+            <div className="notification-list">
+              {notifications.map((notification) => (
+                <article className="notification-item" key={notification.id}>
+                  <Bell size={18} />
+                  <span>
+                    <strong>{notification.title}</strong>
+                    <small>{notification.message}</small>
+                    <em>{new Date(notification.createdAt).toLocaleString()}</em>
+                  </span>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="utility-panel">
+              <Bell size={32} />
+              <h3>No new notifications</h3>
+              <p>Uploads, playlist changes, and account activity will appear here.</p>
+            </div>
+          )}
         </Modal>
       )}
 
@@ -2944,60 +3323,71 @@ function TrackTable({
         </span>
       </div>
 
-      {tracks.map((track, index) => (
-        <div className={`track-row ${currentTrack?.id === track.id ? "playing" : ""}`} key={track.id}>
-          <button className="track-index" onClick={() => onPlay(track, source)} type="button">
-            <span>{index + 1}</span>
-            <Play fill="currentColor" size={16} />
-          </button>
-          <button className="track-title-cell" onClick={() => onPlay(track, source)} type="button">
-            <Artwork track={track} size="sm" />
-            <span>
-              <strong>{track.title}</strong>
-              <small>{track.artist}</small>
+      {tracks.map((track, index) => {
+        const missing = isMissingTrack(track);
+
+        return (
+          <div
+            className={`track-row ${currentTrack?.id === track.id ? "playing" : ""} ${missing ? "missing" : ""}`}
+            key={track.id}
+          >
+            <button className="track-index" disabled={missing} onClick={() => onPlay(track, source)} type="button">
+              <span>{index + 1}</span>
+              <Play fill="currentColor" size={16} />
+            </button>
+            <button className="track-title-cell" disabled={missing} onClick={() => onPlay(track, source)} type="button">
+              <Artwork track={track} size="sm" />
+              <span>
+                <strong>{track.title}</strong>
+                <small>{missing ? "Deleted from database" : track.artist}</small>
+              </span>
+            </button>
+            <span className="table-muted">{track.album}</span>
+            <span className="table-muted">{missing ? "Missing" : new Date(track.createdAt).toLocaleDateString()}</span>
+            <span className="track-row-actions">
+              {!missing && (
+                <>
+                  <IconButton active={track.liked} label="Like" onClick={() => onLike(track)}>
+                    <Heart fill={track.liked ? "currentColor" : "none"} size={17} />
+                  </IconButton>
+                  <IconButton label="Queue" onClick={() => onQueue(track)}>
+                    <ListMusic size={17} />
+                  </IconButton>
+                  {playlists.length ? (
+                    <select
+                      aria-label="Add to playlist"
+                      className="playlist-select"
+                      onChange={(event) => {
+                        addToPlaylist(event.target.value, track);
+                        event.currentTarget.value = "";
+                      }}
+                      value=""
+                    >
+                      <option value="">Playlist</option>
+                      {playlists.map((playlist) => (
+                        <option key={playlist.id} value={playlist.id}>
+                          {playlist.name}
+                        </option>
+                      ))}
+                    </select>
+                  ) : null}
+                </>
+              )}
+              {onRemove && (
+                <IconButton label={missing ? "Clean from playlist" : "Remove from playlist"} onClick={() => onRemove(track)}>
+                  <X size={17} />
+                </IconButton>
+              )}
+              {canDeleteTrack(track) && (
+                <IconButton label={missing ? "Clean deleted song" : "Delete song"} onClick={() => onDelete(track)}>
+                  <Trash2 size={17} />
+                </IconButton>
+              )}
+              <span>{missing ? "Removed" : formatTime(track.duration)}</span>
             </span>
-          </button>
-          <span className="table-muted">{track.album}</span>
-          <span className="table-muted">{new Date(track.createdAt).toLocaleDateString()}</span>
-          <span className="track-row-actions">
-            <IconButton active={track.liked} label="Like" onClick={() => onLike(track)}>
-              <Heart fill={track.liked ? "currentColor" : "none"} size={17} />
-            </IconButton>
-            <IconButton label="Queue" onClick={() => onQueue(track)}>
-              <ListMusic size={17} />
-            </IconButton>
-            {playlists.length ? (
-              <select
-                aria-label="Add to playlist"
-                className="playlist-select"
-                onChange={(event) => {
-                  addToPlaylist(event.target.value, track);
-                  event.currentTarget.value = "";
-                }}
-                value=""
-              >
-                <option value="">Playlist</option>
-                {playlists.map((playlist) => (
-                  <option key={playlist.id} value={playlist.id}>
-                    {playlist.name}
-                  </option>
-                ))}
-              </select>
-            ) : null}
-            {onRemove && (
-              <IconButton label="Remove from playlist" onClick={() => onRemove(track)}>
-                <X size={17} />
-              </IconButton>
-            )}
-            {canDeleteTrack(track) && (
-              <IconButton label="Delete song" onClick={() => onDelete(track)}>
-                <Trash2 size={17} />
-              </IconButton>
-            )}
-            <span>{formatTime(track.duration)}</span>
-          </span>
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 }

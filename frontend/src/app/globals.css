@@ -81,6 +81,15 @@ body {
   box-shadow: 0 24px 80px rgba(30, 215, 96, 0.34);
 }
 
+.splash-copy {
+  max-width: min(420px, calc(100vw - 40px));
+  margin: -4px 0 0;
+  color: rgba(255, 255, 255, 0.78);
+  font-weight: 800;
+  line-height: 1.45;
+  text-align: center;
+}
+
 .spotify-logo {
   width: 100%;
   height: 100%;
@@ -1010,10 +1019,17 @@ body {
   padding: 36px clamp(20px, 4vw, 54px);
 }
 
-.collection-view.playlist-collection {
+.collection-view.cover-collection,
+.collection-view.compact-collection {
   min-height: 100%;
   background:
     linear-gradient(180deg, var(--collection-accent-soft) 0%, rgba(18, 18, 18, 0.64) 290px, transparent 560px),
+    var(--panel);
+}
+
+.collection-view.compact-collection {
+  background:
+    linear-gradient(180deg, var(--collection-accent-mid) 0%, rgba(18, 18, 18, 0.54) 220px, transparent 420px),
     var(--panel);
 }
 
@@ -1039,6 +1055,23 @@ body {
   margin: 0;
   font-size: clamp(2.4rem, 5vw, 5rem);
   line-height: 1;
+}
+
+.collection-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+}
+
+.collection-title-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .collection-header p {
@@ -1131,6 +1164,16 @@ body {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.track-row.missing {
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.track-row.missing .track-title-cell strong,
+.track-row.missing .table-muted {
+  color: rgba(255, 255, 255, 0.58);
+}
+
 .track-row.playing .track-title-cell strong,
 .track-row.playing .track-index {
   color: var(--green);
@@ -1143,6 +1186,12 @@ body {
   color: inherit;
   cursor: pointer;
   text-align: left;
+}
+
+.track-index:disabled,
+.track-title-cell:disabled {
+  cursor: default;
+  opacity: 1;
 }
 
 .track-index {
@@ -1638,6 +1687,50 @@ input[type="range"]:hover {
   line-height: 1.5;
 }
 
+.notification-list {
+  display: grid;
+  gap: 10px;
+}
+
+.notification-item {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #101010;
+  color: var(--muted);
+  padding: 14px;
+}
+
+.notification-item svg {
+  margin-top: 2px;
+  color: var(--green);
+}
+
+.notification-item strong,
+.notification-item small,
+.notification-item em {
+  display: block;
+}
+
+.notification-item strong {
+  color: #fff;
+}
+
+.notification-item small {
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.notification-item em {
+  margin-top: 8px;
+  color: var(--faint);
+  font-size: 0.8rem;
+  font-style: normal;
+}
+
 @media (max-width: 1320px) {
   .content-grid {
     grid-template-columns: minmax(240px, var(--library-width, 330px)) 10px minmax(0, 1fr);
@@ -1677,9 +1770,9 @@ input[type="range"]:hover {
   }
 
   .top-bar {
-    grid-template-columns: 44px 44px minmax(0, 1fr);
-    gap: 8px;
-    padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 12px;
+    grid-template-columns: 38px 38px minmax(0, 1fr);
+    gap: 7px;
+    padding: calc(8px + env(safe-area-inset-top, 0px)) 10px 10px;
   }
 
   .window-dots {
@@ -1689,15 +1782,15 @@ input[type="range"]:hover {
   .home-button {
     grid-column: 1;
     display: grid;
-    width: 44px;
-    height: 44px;
+    width: 38px;
+    height: 38px;
   }
 
   .mobile-library-button {
     grid-column: 2;
     display: grid;
-    width: 44px;
-    height: 44px;
+    width: 38px;
+    height: 38px;
     background: #1f1f1f;
     color: #fff;
   }
@@ -1713,15 +1806,15 @@ input[type="range"]:hover {
 
   .search-box {
     grid-column: 3;
-    grid-template-columns: 22px minmax(0, 1fr);
-    gap: 8px;
-    height: 44px;
+    grid-template-columns: 19px minmax(0, 1fr);
+    gap: 6px;
+    height: 38px;
     min-width: 0;
-    padding: 0 12px;
+    padding: 0 10px;
   }
 
   .search-box input {
-    font-size: 0.92rem;
+    font-size: 0.86rem;
   }
 
   .upload-top-button {
@@ -1740,7 +1833,7 @@ input[type="range"]:hover {
   .content-grid {
     grid-template-columns: minmax(0, 1fr);
     min-height: 0;
-    padding: 0 10px 230px;
+    padding: 0 10px 206px;
   }
 
   .content-grid.details-closed {
@@ -1797,6 +1890,10 @@ input[type="range"]:hover {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .upload-quick-tile {
+    display: none;
+  }
+
   .hero-band {
     min-height: auto;
     padding-top: 12px;
@@ -1810,8 +1907,9 @@ input[type="range"]:hover {
   }
 
   .hero-tabs button {
-    min-height: 42px;
-    padding: 0 12px;
+    min-height: 38px;
+    padding: 0 10px;
+    font-size: 0.88rem;
   }
 
   .collection-header {
@@ -1840,20 +1938,28 @@ input[type="range"]:hover {
     left: 0;
     z-index: 20;
     grid-template-columns: 1fr;
-    gap: 8px;
-    max-height: 45dvh;
+    gap: 7px;
+    max-height: 42dvh;
     border-top: 1px solid rgba(255, 255, 255, 0.1);
-    background: linear-gradient(180deg, rgba(18, 18, 18, 0.72), rgba(0, 0, 0, 0.96));
+    background: linear-gradient(180deg, rgba(18, 18, 18, 0.5), rgba(0, 0, 0, 0.94));
     backdrop-filter: blur(18px);
-    padding: 8px 14px calc(8px + env(safe-area-inset-bottom, 0px));
+    padding: 7px 12px calc(7px + env(safe-area-inset-bottom, 0px));
   }
 
   .player-track {
-    order: 1;
-    min-height: 58px;
+    order: 2;
+    grid-template-columns: 48px minmax(0, 1fr) 34px;
+    gap: 10px;
+    min-height: 54px;
     border-radius: 8px;
-    background: linear-gradient(180deg, rgba(18, 18, 18, 0.72), rgba(0, 0, 0, 0.34));
+    background: linear-gradient(180deg, rgba(25, 25, 25, 0.5), rgba(0, 0, 0, 0.28));
     padding: 4px 8px;
+  }
+
+  .player-track .artwork-sm,
+  .player-track .empty-art {
+    width: 48px;
+    height: 48px;
   }
 
   .player-track.interactive {
@@ -1861,11 +1967,11 @@ input[type="range"]:hover {
   }
 
   .player-center {
-    order: 2;
-    gap: 6px;
+    order: 1;
+    gap: 4px;
     border-radius: 8px;
-    background: linear-gradient(180deg, rgba(13, 13, 13, 0.58), rgba(0, 0, 0, 0.3));
-    padding: 2px 0 0;
+    background: linear-gradient(180deg, rgba(22, 22, 22, 0.46), rgba(0, 0, 0, 0.22));
+    padding: 2px 4px 4px;
   }
 
   .mobile-action-dock {
@@ -1880,7 +1986,7 @@ input[type="range"]:hover {
     align-items: center;
     justify-content: space-between;
     gap: 8px;
-    min-height: 42px;
+    min-height: 38px;
   }
 
   .mobile-profile-wrap {
@@ -1888,9 +1994,14 @@ input[type="range"]:hover {
   }
 
   .mobile-action-icons .avatar-button {
-    width: 42px;
-    height: 42px;
+    width: 38px;
+    height: 38px;
     border-width: 6px;
+  }
+
+  .mobile-action-icons .icon-button {
+    width: 38px;
+    height: 38px;
   }
 
   .mobile-profile-popover {

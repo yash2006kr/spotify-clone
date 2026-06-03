@@ -132,3 +132,20 @@ export async function requireUser() {
 export function normalizeEmail(email: string) {
   return email.trim().toLowerCase();
 }
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+export function userLookupQuery(identifier: string) {
+  const value = identifier.trim();
+  const email = normalizeEmail(value);
+
+  if (value.includes("@")) {
+    return { email };
+  }
+
+  return {
+    $or: [{ email }, { name: new RegExp(`^${escapeRegExp(value)}$`, "i") }]
+  };
+}

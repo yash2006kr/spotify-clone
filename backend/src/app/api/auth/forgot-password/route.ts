@@ -1,27 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { hashPassword, normalizeEmail, setSession, type UserDocument } from "@/lib/auth";
+import { hashPassword, setSession, userLookupQuery, type UserDocument } from "@/lib/auth";
 import { ensureIndexes, getDb } from "@/lib/mongodb";
 import { userToClient } from "@/lib/serializers";
 
 export const runtime = "nodejs";
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function accountQuery(identifier: string) {
-  const value = identifier.trim();
-  const email = normalizeEmail(value);
-
-  if (value.includes("@")) {
-    return { email };
-  }
-
-  return {
-    $or: [{ email }, { name: new RegExp(`^${escapeRegExp(value)}$`, "i") }]
-  };
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -36,7 +19,7 @@ export async function POST(request: NextRequest) {
     await ensureIndexes();
     const db = await getDb();
     const users = db.collection<UserDocument>("users");
-    const user = await users.findOne(accountQuery(identifier));
+    const user = await users.findOne(userLookupQuery(identifier));
 
     if (!user) {
       return NextResponse.json({ error: "No account exists for that username or email." }, { status: 404 });

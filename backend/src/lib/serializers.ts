@@ -1,4 +1,4 @@
-import type { AppUser, Playlist, Track } from "@/types";
+import type { AppNotification, AppUser, Playlist, Track } from "@/types";
 
 type AnyDocument = Record<string, any>;
 
@@ -59,5 +59,15 @@ export function playlistToClient(playlist: AnyDocument, tracks?: Track[]): Playl
     createdAt: dateString(playlist.createdAt),
     updatedAt: dateString(playlist.updatedAt),
     tracks
+  };
+}
+
+export function notificationToClient(notification: AnyDocument): AppNotification {
+  return {
+    id: notification._id.toString(),
+    title: notification.title || "Notification",
+    message: notification.message || notification.body || "",
+    targetEmail: notification.targetEmail || notification.userEmail || null,
+    createdAt: dateString(notification.createdAt)
   };
 }

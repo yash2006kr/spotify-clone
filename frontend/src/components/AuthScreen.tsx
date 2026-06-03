@@ -165,7 +165,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
       const result = await apiFetch(`/api/auth/${mode === "login" ? "login" : "register"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email, password })
+        body: JSON.stringify(mode === "login" ? { identifier: email, password } : { name, email, password })
       });
       const data = await result.json();
 
@@ -252,14 +252,14 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
           )}
 
           <label className="field">
-            {mode === "forgot" ? <UserRound size={18} /> : <Mail size={18} />}
+            {mode === "register" ? <Mail size={18} /> : <UserRound size={18} />}
             <input
-              autoComplete={mode === "forgot" ? "username" : "email"}
+              autoComplete={mode === "register" ? "email" : "username"}
               disabled={mode === "forgot" && resetAccountFound}
               onChange={(event) => setEmail(event.target.value)}
-              placeholder={mode === "forgot" ? "Username or email" : "Email"}
+              placeholder={mode === "register" ? "Email" : "Username or email"}
               required
-              type={mode === "forgot" ? "text" : "email"}
+              type={mode === "register" ? "email" : "text"}
               value={email}
             />
           </label>

@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/auth";
 import { fieldValue, isNonEmptyFile, uploadFileToGridFS } from "@/lib/media";
 import { getBucket, getDb } from "@/lib/mongodb";
 import { playlistToClient, trackToClient } from "@/lib/serializers";
+import type { Track } from "@/types";
 
 export const runtime = "nodejs";
 
@@ -80,6 +81,25 @@ async function deleteCoverFile(fileId: unknown) {
   }
 }
 
+function missingTrackToClient(trackId: ObjectId): Track {
+  return {
+    id: trackId.toString(),
+    title: "Deleted song",
+    artist: "Missing from library",
+    album: "Removed",
+    genre: "Unavailable",
+    duration: 0,
+    plays: 0,
+    liked: false,
+    uploadedById: "",
+    uploadedByName: "Unknown",
+    createdAt: new Date(0).toISOString(),
+    audioUrl: "",
+    coverUrl: null,
+    missing: true
+  };
+}
+
 export async function GET(_request: Request, context: RouteContext) {
   try {
     const user = await requireUser();
@@ -116,7 +136,11 @@ export async function GET(_request: Request, context: RouteContext) {
 
     const orderedTracks = trackIds.flatMap((trackId: ObjectId) => {
       const track = tracks.find((item) => item._id.equals(trackId));
-      return track ? [trackToClient(track, liked.has(track._id.toString()))] : [];
+      return track
+        ? [trackToClient(track, liked.has(track._id.toString()))]
+        : isOwner
+          ? [missingTrackToClient(trackId)]
+          : [];
     });
 
     return NextResponse.json({ playlist: playlistToClient(playlist, orderedTracks) });
