@@ -1911,11 +1911,18 @@ export function SpotifyApp() {
   }
 
   function handleBackNavigation() {
+    const wasSearching = Boolean(search.trim());
+
     setSearch("");
     setSearchResults(null);
     setSearchLoading(false);
     setMobileNowOpen(false);
     setMobileLibraryOpen(false);
+
+    if (wasSearching && view !== "home") {
+      setLastView(null);
+      return;
+    }
 
     if (lastView && lastView !== view) {
       setView(lastView);
@@ -2470,47 +2477,40 @@ export function SpotifyApp() {
         </section>
 
         <section className="main-panel panel">
-          <div className={`hero-band ${view === "home" && !search ? "home-hero" : "collection-nav"}`}>
-            <div className="hero-tabs">
-              {(view !== "home" || search) && (
-                <IconButton label="Back" onClick={handleBackNavigation} className="back-button">
-                  <ArrowLeft size={20} />
-                </IconButton>
-              )}
-              <button
-                className={view === "home" && !search ? "active" : ""}
-                onClick={resetHomeView}
-                type="button"
-              >
-                All
-              </button>
-              <button
-                className={view === "songs" && !search ? "active" : ""}
-                onClick={() => {
-                  setSearch("");
-                  setSearchResults(null);
-                  setSearchLoading(false);
-                  selectView("songs");
-                }}
-                type="button"
-              >
-                Songs
-              </button>
-              <button
-                className={view === "podcasts" && !search ? "active" : ""}
-                onClick={() => {
-                  setSearch("");
-                  setSearchResults(null);
-                  setSearchLoading(false);
-                  selectView("podcasts");
-                }}
-                type="button"
-              >
-                Podcasts
-              </button>
-            </div>
+          {view === "home" && !search && (
+            <div className="hero-band home-hero">
+              <div className="hero-tabs">
+                <button
+                  className="active"
+                  onClick={resetHomeView}
+                  type="button"
+                >
+                  All
+                </button>
+                <button
+                  onClick={() => {
+                    setSearch("");
+                    setSearchResults(null);
+                    setSearchLoading(false);
+                    selectView("songs");
+                  }}
+                  type="button"
+                >
+                  Songs
+                </button>
+                <button
+                  onClick={() => {
+                    setSearch("");
+                    setSearchResults(null);
+                    setSearchLoading(false);
+                    selectView("podcasts");
+                  }}
+                  type="button"
+                >
+                  Podcasts
+                </button>
+              </div>
 
-            {view === "home" && !search && (
               <div className="quick-grid">
                 <button className="quick-tile" onClick={() => selectView("liked")} type="button">
                   <Artwork liked size="sm" />
@@ -2529,8 +2529,8 @@ export function SpotifyApp() {
                   </button>
                 ))}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {view === "home" && !search ? (
             <>
@@ -2570,6 +2570,11 @@ export function SpotifyApp() {
               className={`collection-view ${compactCollectionIcon ? "compact-collection" : "cover-collection"}`}
               style={collectionStyle}
             >
+              <div className="collection-back-row">
+                <IconButton label="Back" onClick={handleBackNavigation} className="back-button">
+                  <ArrowLeft size={20} />
+                </IconButton>
+              </div>
               <div className={`collection-header ${compactCollectionIcon ? "compact-header" : ""}`}>
                 {!compactCollectionIcon && (
                   view === "liked" ? (

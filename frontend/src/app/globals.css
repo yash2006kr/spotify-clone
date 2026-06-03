@@ -1033,6 +1033,25 @@ body {
     var(--panel);
 }
 
+.collection-back-row {
+  display: flex;
+  align-items: center;
+  min-height: 46px;
+  margin-bottom: 18px;
+}
+
+.back-button {
+  width: 46px;
+  height: 46px;
+  background: rgba(20, 20, 20, 0.82);
+  color: #fff;
+}
+
+.back-button:hover {
+  background: #fff;
+  color: #111;
+}
+
 .collection-header {
   display: grid;
   grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
