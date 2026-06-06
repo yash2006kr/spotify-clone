@@ -385,6 +385,7 @@ export function SpotifyApp() {
   const artistCoverFileRef = useRef<HTMLInputElement | null>(null);
   const mobileDetailsDragStart = useRef<number | null>(null);
   const pendingAutoPlayRef = useRef(false);
+  const handledEndedTrackRef = useRef<string | null>(null);
   const [booting, setBooting] = useState(true);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const [libraryLoading, setLibraryLoading] = useState(false);
@@ -706,14 +707,23 @@ export function SpotifyApp() {
 
   const requestAudioPlay = useCallback((audio = audioRef.current) => {
     if (!audio) {
-      return;
+      return Promise.resolve(false);
     }
 
-    audio.play().catch((error: DOMException) => {
-      if (error.name === "NotAllowedError") {
-        setIsPlaying(false);
-      }
-    });
+    return audio
+      .play()
+      .then(() => {
+        pendingAutoPlayRef.current = false;
+        return true;
+      })
+      .catch((error: DOMException) => {
+        if (error.name === "NotAllowedError") {
+          pendingAutoPlayRef.current = false;
+          setIsPlaying(false);
+        }
+
+        return false;
+      });
   }, []);
 
   useEffect(() => {
@@ -725,10 +735,11 @@ export function SpotifyApp() {
 
     if (isPlaying) {
       if (pendingAutoPlayRef.current) {
+        audio.autoplay = true;
         audio.load();
       }
 
-      requestAudioPlay(audio);
+      requestAudioPlay(audio).catch(() => undefined);
     } else {
       audio.pause();
     }
@@ -1248,9 +1259,18 @@ export function SpotifyApp() {
       return;
     }
 
+    if (currentTrack && handledEndedTrackRef.current === currentTrack.id) {
+      return;
+    }
+
+    handledEndedTrackRef.current = currentTrack?.id || null;
     pendingAutoPlayRef.current = true;
     playNext();
-  }, [playNext, repeatMode]);
+  }, [currentTrack, playNext, repeatMode]);
+
+  useEffect(() => {
+    handledEndedTrackRef.current = null;
+  }, [currentTrack?.id]);
 
   useEffect(() => {
     if (!("mediaSession" in navigator)) {
@@ -2119,14 +2139,22 @@ export function SpotifyApp() {
             return;
           }
 
-          pendingAutoPlayRef.current = false;
-          requestAudioPlay(event.currentTarget);
+          requestAudioPlay(event.currentTarget).catch(() => undefined);
         }}
+        autoPlay={isPlaying}
         onEnded={handleEnded}
         onError={() => {
           pendingAutoPlayRef.current = false;
         }}
         onLoadedMetadata={(event) => setLoadedDuration(event.currentTarget.duration || currentTrack?.duration || 0)}
+        onPause={(event) => {
+          if (isPlaying && event.currentTarget.ended) {
+            handleEnded();
+          }
+        }}
+        onPlaying={() => {
+          pendingAutoPlayRef.current = false;
+        }}
         onTimeUpdate={(event) => setCurrentTime(event.currentTarget.currentTime)}
         playsInline
         preload="auto"
