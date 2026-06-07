@@ -1,3 +1,5 @@
+[The website is live here:](https://spotify-ggx2.onrender.com/)
+
 # spotify
 
 A Spotify-style music app split into separate deployable frontend and backend Next.js services, backed by MongoDB and GridFS.
