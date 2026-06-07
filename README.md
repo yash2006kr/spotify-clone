@@ -1,4 +1,4 @@
-[The website is live here:](https://spotify-ggx2.onrender.com/)
+[Click here to view the live website](https://spotify-ggx2.onrender.com/)
 
 # spotify
 
