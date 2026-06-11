@@ -215,7 +215,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
         <p className="auth-subtitle">
           {mode === "forgot"
             ? "Enter your username or email, then set a new password and jump back into your library."
-            : "Upload tracks, build playlists, and keep your listening library synced through MongoDB."}
+            : "Stream songs, albums, artists, and playlists from the JioSaavn catalog."}
         </p>
 
         <div className="auth-tabs" role="tablist" aria-label="Authentication mode">

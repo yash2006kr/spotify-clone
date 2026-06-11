@@ -19,6 +19,8 @@ export type Track = {
   createdAt: string;
   audioUrl: string;
   coverUrl: string | null;
+  sourceUrl?: string;
+  albumId?: string;
   missing?: boolean;
 };
 

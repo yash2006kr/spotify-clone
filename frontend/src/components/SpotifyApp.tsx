@@ -1,9 +1,7 @@
 "use client";
 
 import {
-  ChangeEvent,
   CSSProperties,
-  FormEvent,
   MouseEvent,
   PointerEvent as ReactPointerEvent,
   useCallback,
@@ -31,7 +29,6 @@ import {
   Music2,
   Pause,
   Play,
-  Plus,
   Repeat,
   Repeat1,
   Search,
@@ -39,7 +36,6 @@ import {
   SkipBack,
   SkipForward,
   Trash2,
-  Upload,
   UserRound,
   Volume2,
   X
@@ -82,13 +78,18 @@ const gradients = [
 ];
 const accentColors = ["#477875", "#714f86", "#806f42", "#426d8c", "#7a5a4a", "#416d55", "#6b4f7d", "#5d6b42"];
 const loadingMessages = [
-  "Tuning the room before the first track lands.",
-  "Dusting off album covers and lining up the queue.",
-  "Finding the tiny groove between login and library.",
-  "Warming up playlists, likes, and the good stuff.",
+  "Tuning the JioSaavn catalog before the first track lands.",
+  "Fetching album covers and lining up the queue.",
+  "Finding songs, playlists, artists, and albums.",
+  "Warming up streams, likes, and the good stuff.",
   "Checking the stage lights for your next song."
 ];
 const spotifyLogoSrc = "/spotify-logo.jpeg";
+const guestUser: AppUser = {
+  id: "guest",
+  name: "Guest listener",
+  email: "guest@local"
+};
 
 function hashValue(value: string) {
   return value.split("").reduce((total, char) => total + char.charCodeAt(0), 0);
@@ -279,6 +280,13 @@ function artistKey(artist: string) {
   return artist.trim().toLowerCase();
 }
 
+function splitArtistNames(artist: string) {
+  return artist
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
+}
+
 function isArtistCoverPayload(value: unknown): value is ArtistCoverPayload {
   return (
     typeof value === "object" &&
@@ -343,7 +351,7 @@ function PlaylistArtwork({ add = false, hero = false, playlist }: PlaylistArtwor
         // eslint-disable-next-line @next/next/no-img-element
         <img alt="" src={mediaUrl(playlist.coverUrl) || ""} />
       ) : add ? (
-        <Upload size={hero ? 72 : 24} />
+        <ListMusic size={hero ? 72 : 24} />
       ) : (
         <ListMusic size={hero ? 72 : 24} />
       )}
@@ -377,12 +385,6 @@ function IconButton({ active, className = "", disabled, label, onClick, children
 
 export function SpotifyApp() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const uploadFileRef = useRef<HTMLInputElement | null>(null);
-  const coverFileRef = useRef<HTMLInputElement | null>(null);
-  const playlistCoverFileRef = useRef<HTMLInputElement | null>(null);
-  const selectedPlaylistCoverFileRef = useRef<HTMLInputElement | null>(null);
-  const albumCoverFileRef = useRef<HTMLInputElement | null>(null);
-  const artistCoverFileRef = useRef<HTMLInputElement | null>(null);
   const mobileDetailsDragStart = useRef<number | null>(null);
   const pendingAutoPlayRef = useRef(false);
   const handledEndedTrackRef = useRef<string | null>(null);
@@ -408,14 +410,7 @@ export function SpotifyApp() {
   const [volume, setVolume] = useState(0.78);
   const [currentTime, setCurrentTime] = useState(0);
   const [loadedDuration, setLoadedDuration] = useState(0);
-  const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadTargetPlaylistId, setUploadTargetPlaylistId] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [playlistOpen, setPlaylistOpen] = useState(false);
-  const [playlistSaving, setPlaylistSaving] = useState(false);
-  const [playlistCoverSaving, setPlaylistCoverSaving] = useState(false);
-  const [albumCoverSaving, setAlbumCoverSaving] = useState(false);
-  const [artistCoverSaving, setArtistCoverSaving] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(false);
   const [activityOpen, setActivityOpen] = useState(false);
@@ -451,22 +446,6 @@ export function SpotifyApp() {
     return clamp(Number(window.localStorage.getItem("spotify:now-width")) || 380, 300, 520);
   });
   const [followedArtists, setFollowedArtists] = useState<Set<string>>(() => new Set());
-  const [uploadForm, setUploadForm] = useState({
-    title: "",
-    artist: "",
-    album: "",
-    genre: "Uploaded",
-    duration: 0,
-    audioName: "",
-    coverName: ""
-  });
-  const [playlistForm, setPlaylistForm] = useState({
-    name: "",
-    description: "",
-    coverName: "",
-    coverColor: "#1ed760",
-    isPublic: false
-  });
 
   const showToast = useCallback((message: string) => {
     setToast(message);
@@ -495,8 +474,6 @@ export function SpotifyApp() {
     setQueueOpen(false);
     setActivityOpen(false);
     setFriendsOpen(false);
-    setUploadOpen(false);
-    setPlaylistOpen(false);
     setUploadTargetPlaylistId(null);
   }, []);
 
@@ -539,29 +516,23 @@ export function SpotifyApp() {
     }
   }, [user, view]);
 
-  const openUpload = useCallback((playlistId?: string | null) => {
-    setUploadTargetPlaylistId(playlistId || null);
-    setUploadOpen(true);
-  }, []);
-
-  const closeUpload = useCallback(() => {
-    setUploadOpen(false);
-    setUploadTargetPlaylistId(null);
-  }, []);
-
-  const loadLibrary = useCallback(async () => {
+  const loadLibrary = useCallback(async (userId = guestUser.id) => {
     setLibraryLoading(true);
 
     try {
-      const [trackResult, playlistResult, artistCoverResult] = await Promise.all([
+      const [trackResult, playlistResult] = await Promise.all([
         apiFetch("/api/tracks", { cache: "no-store" }),
-        apiFetch("/api/playlists", { cache: "no-store" }),
-        apiFetch("/api/artists/cover?list=1", { cache: "no-store" })
+        apiFetch("/api/playlists", { cache: "no-store" })
       ]);
 
       if (trackResult.ok) {
         const data = await trackResult.json();
-        setTracks(data.tracks || []);
+        const likedIds = new Set(loadIdList(`spotify:liked-tracks:${userId}`));
+        const nextTracks = ((data.tracks || []) as Track[]).map((track) => ({
+          ...track,
+          liked: likedIds.has(track.id) || track.liked
+        }));
+        setTracks(nextTracks);
       }
 
       if (playlistResult.ok) {
@@ -569,18 +540,7 @@ export function SpotifyApp() {
         setPlaylists(data.playlists || []);
       }
 
-      if (artistCoverResult.ok) {
-        const data = await artistCoverResult.json();
-        const covers: unknown[] = Array.isArray(data.covers) ? data.covers : [];
-
-        setArtistCovers(
-          Object.fromEntries(
-            covers
-              .filter(isArtistCoverPayload)
-              .map((cover) => [artistKey(cover.artist), cover.coverUrl])
-          )
-        );
-      }
+      setArtistCovers({});
     } finally {
       setLibraryLoading(false);
     }
@@ -660,10 +620,20 @@ export function SpotifyApp() {
         if (result.ok) {
           const data = await result.json();
           activateUser(data.user);
-          loadLibrary().catch(() => showToast("Could not refresh the library."));
+          loadLibrary(data.user.id).catch(() => showToast("Could not refresh the JioSaavn catalog."));
+        } else {
+          activateUser(guestUser);
+          loadLibrary(guestUser.id).catch(() => showToast("Could not refresh the JioSaavn catalog."));
         }
       })
-      .catch(() => undefined)
+      .catch(() => {
+        if (!active) {
+          return;
+        }
+
+        activateUser(guestUser);
+        loadLibrary(guestUser.id).catch(() => showToast("Could not refresh the JioSaavn catalog."));
+      })
       .finally(() => {
         if (active) {
           setBooting(false);
@@ -875,7 +845,10 @@ export function SpotifyApp() {
     [allTracks, selectedAlbumName]
   );
   const selectedArtistTracks = useMemo(
-    () => (selectedArtistName ? allTracks.filter((track) => track.artist === selectedArtistName) : []),
+    () =>
+      selectedArtistName
+        ? allTracks.filter((track) => splitArtistNames(track.artist).includes(selectedArtistName))
+        : [],
     [allTracks, selectedArtistName]
   );
   const libraryAlbums = useMemo(() => {
@@ -894,8 +867,11 @@ export function SpotifyApp() {
     const artists = new Map<string, Track[]>();
 
     allTracks.forEach((track) => {
-      const artist = track.artist || "Unknown Artist";
-      artists.set(artist, [...(artists.get(artist) || []), track]);
+      const names = splitArtistNames(track.artist || "Unknown Artist");
+
+      names.forEach((artist) => {
+        artists.set(artist, [...(artists.get(artist) || []), track]);
+      });
     });
 
     return [...artists.entries()]
@@ -907,11 +883,8 @@ export function SpotifyApp() {
       }))
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [allTracks, artistCovers]);
-  const ownPlaylists = useMemo(
-    () => playlists.filter((playlist) => playlist.ownerId === user?.id),
-    [playlists, user?.id]
-  );
-  const selectedPlaylistOwned = Boolean(selectedPlaylist && selectedPlaylist.ownerId === user?.id);
+  const ownPlaylists = useMemo(() => [] as Playlist[], []);
+  const selectedPlaylistOwned = false;
   const libraryQuery = librarySearch.trim().toLowerCase();
   const visiblePlaylists = useMemo(
     () =>
@@ -1367,17 +1340,18 @@ export function SpotifyApp() {
 
       const nextLiked = !track.liked;
       updateTrackEverywhere(track.id, (item) => ({ ...item, liked: nextLiked }));
+      const likeKey = `spotify:liked-tracks:${user?.id || guestUser.id}`;
+      const likedIds = new Set(loadIdList(likeKey));
 
-      const result = await apiFetch(`/api/library/likes/${track.id}`, {
-        method: nextLiked ? "POST" : "DELETE"
-      });
-
-      if (!result.ok) {
-        updateTrackEverywhere(track.id, (item) => ({ ...item, liked: track.liked }));
-        showToast("Could not update liked songs.");
+      if (nextLiked) {
+        likedIds.add(track.id);
+      } else {
+        likedIds.delete(track.id);
       }
+
+      saveIdList(likeKey, [...likedIds]);
     },
-    [showToast, updateTrackEverywhere]
+    [showToast, updateTrackEverywhere, user?.id]
   );
 
   const deleteTrack = useCallback(
@@ -1506,10 +1480,7 @@ export function SpotifyApp() {
     [selectedPlaylist, showToast]
   );
 
-  const canDeleteTrack = useCallback(
-    () => Boolean(user),
-    [user]
-  );
+  const canDeleteTrack = useCallback(() => false, []);
 
   const beginLibraryResize = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -1604,7 +1575,6 @@ export function SpotifyApp() {
       // Local session cleanup should still happen if the network request fails.
     } finally {
       clearSessionToken();
-      setUser(null);
       setCurrentTrack(null);
       setIsPlaying(false);
       setTracks([]);
@@ -1624,6 +1594,8 @@ export function SpotifyApp() {
       setProfileOpen(false);
       setQueueOpen(false);
       setMobileNowOpen(false);
+      activateUser(guestUser);
+      loadLibrary(guestUser.id).catch(() => showToast("Could not refresh the JioSaavn catalog."));
     }
   }
 
@@ -1647,345 +1619,6 @@ export function SpotifyApp() {
       showToast("spotify installed.");
     } else {
       showToast("Install dismissed.");
-    }
-  }
-
-  async function handleCreatePlaylist(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-
-    if (!playlistForm.name.trim()) {
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append("name", playlistForm.name);
-    formData.append("description", playlistForm.description);
-    formData.append("coverColor", playlistForm.coverColor);
-    formData.append("isPublic", String(playlistForm.isPublic));
-
-    const cover = playlistCoverFileRef.current?.files?.[0];
-
-    if (cover) {
-      formData.append("cover", cover);
-    }
-
-    setPlaylistSaving(true);
-
-    try {
-      const result = await apiFetch("/api/playlists", {
-        method: "POST",
-        body: formData
-      });
-      const data = await result.json();
-
-      if (!result.ok) {
-        showToast(data.error || "Could not create playlist.");
-        return;
-      }
-
-      setPlaylists((existing) => [data.playlist, ...existing]);
-      setPlaylistOpen(false);
-      setPlaylistForm({ name: "", description: "", coverName: "", coverColor: "#1ed760", isPublic: false });
-      if (playlistCoverFileRef.current) {
-        playlistCoverFileRef.current.value = "";
-      }
-      selectView(`playlist:${data.playlist.id}`);
-    } catch (error) {
-      showToast((error as Error).message);
-    } finally {
-      setPlaylistSaving(false);
-    }
-  }
-
-  function handleAudioFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-
-    if (!file) {
-      return;
-    }
-
-    setUploadForm((existing) => ({
-      ...existing,
-      audioName: file.name,
-      title: existing.title || file.name.replace(/\.[^/.]+$/, "").replace(/[_-]+/g, " ")
-    }));
-
-    const audio = document.createElement("audio");
-    audio.preload = "metadata";
-    audio.onloadedmetadata = () => {
-      setUploadForm((existing) => ({
-        ...existing,
-        duration: Number.isFinite(audio.duration) ? Math.round(audio.duration) : existing.duration
-      }));
-      URL.revokeObjectURL(audio.src);
-    };
-    audio.src = URL.createObjectURL(file);
-  }
-
-  function handleCoverFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-
-    if (file) {
-      setUploadForm((existing) => ({ ...existing, coverName: file.name }));
-    }
-  }
-
-  function handlePlaylistCoverFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-
-    if (!file) {
-      return;
-    }
-
-    setPlaylistForm((existing) => ({ ...existing, coverName: file.name }));
-    extractDominantColor(file).then((coverColor) =>
-      setPlaylistForm((existing) => ({ ...existing, coverColor }))
-    );
-  }
-
-  async function handleSelectedPlaylistCoverChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-
-    if (!file || !selectedPlaylist) {
-      return;
-    }
-
-    setPlaylistCoverSaving(true);
-
-    try {
-      const coverColor = await extractDominantColor(file);
-      const formData = new FormData();
-      formData.append("cover", file);
-      formData.append("coverColor", coverColor);
-
-      const result = await apiFetch(`/api/playlists/${selectedPlaylist.id}`, {
-        method: "PATCH",
-        body: formData
-      });
-      const data = await result.json();
-
-      if (!result.ok) {
-        throw new Error(data.error || "Could not update playlist cover.");
-      }
-
-      setPlaylists((existing) =>
-        existing.map((playlist) =>
-          playlist.id === data.playlist.id ? { ...playlist, ...data.playlist } : playlist
-        )
-      );
-      showToast("Playlist cover updated.");
-    } catch (error) {
-      showToast((error as Error).message);
-    } finally {
-      setPlaylistCoverSaving(false);
-      if (selectedPlaylistCoverFileRef.current) {
-        selectedPlaylistCoverFileRef.current.value = "";
-      }
-    }
-  }
-
-  async function handleAlbumCoverChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-
-    if (!file || !selectedAlbumName) {
-      return;
-    }
-
-    setAlbumCoverSaving(true);
-
-    try {
-      const formData = new FormData();
-      formData.append("album", selectedAlbumName);
-      formData.append("cover", file);
-
-      const result = await apiFetch("/api/albums/cover", {
-        method: "PATCH",
-        body: formData
-      });
-      const data = await result.json();
-
-      if (!result.ok) {
-        throw new Error(data.error || "Could not update album cover.");
-      }
-
-      mergeTracksEverywhere(data.tracks || []);
-      showToast("Album cover updated.");
-    } catch (error) {
-      showToast((error as Error).message);
-    } finally {
-      setAlbumCoverSaving(false);
-      if (albumCoverFileRef.current) {
-        albumCoverFileRef.current.value = "";
-      }
-    }
-  }
-
-  async function handleArtistCoverChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-
-    if (!file || !selectedArtistName) {
-      return;
-    }
-
-    setArtistCoverSaving(true);
-
-    try {
-      const formData = new FormData();
-      formData.append("artist", selectedArtistName);
-      formData.append("cover", file);
-
-      const result = await apiFetch("/api/artists/cover", {
-        method: "PATCH",
-        body: formData
-      });
-      const data = await result.json();
-
-      if (!result.ok) {
-        throw new Error(data.error || "Could not update artist cover.");
-      }
-
-      if (data.artist?.coverUrl) {
-        setArtistCovers((existing) => ({
-          ...existing,
-          [artistKey(data.artist.name || selectedArtistName)]: data.artist.coverUrl
-        }));
-      }
-      showToast("Artist cover updated.");
-    } catch (error) {
-      showToast((error as Error).message);
-    } finally {
-      setArtistCoverSaving(false);
-      if (artistCoverFileRef.current) {
-        artistCoverFileRef.current.value = "";
-      }
-    }
-  }
-
-  async function handlePlaylistVisibility(isPublic: boolean) {
-    if (!selectedPlaylist || !selectedPlaylistOwned) {
-      return;
-    }
-
-    const result = await apiFetch(`/api/playlists/${selectedPlaylist.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ isPublic })
-    });
-    const data = await result.json().catch(() => ({}));
-
-    if (!result.ok) {
-      showToast(data.error || "Could not update playlist visibility.");
-      return;
-    }
-
-    setPlaylists((existing) =>
-      existing.map((playlist) => (playlist.id === data.playlist.id ? { ...playlist, ...data.playlist } : playlist))
-    );
-    showToast(isPublic ? "Playlist is public." : "Playlist is private.");
-  }
-
-  async function handleDeletePlaylist() {
-    if (!selectedPlaylist || !selectedPlaylistOwned) {
-      return;
-    }
-
-    if (!window.confirm(`Delete "${selectedPlaylist.name}"? Songs will stay in the library.`)) {
-      return;
-    }
-
-    const result = await apiFetch(`/api/playlists/${selectedPlaylist.id}`, { method: "DELETE" });
-    const data = await result.json().catch(() => ({}));
-
-    if (!result.ok) {
-      showToast(data.error || "Could not delete playlist.");
-      return;
-    }
-
-    setPlaylists((existing) => existing.filter((playlist) => playlist.id !== selectedPlaylist.id));
-    resetHomeView();
-    showToast(`Deleted "${selectedPlaylist.name}".`);
-  }
-
-  async function handleUpload(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const audio = uploadFileRef.current?.files?.[0];
-    const cover = coverFileRef.current?.files?.[0];
-
-    if (!audio) {
-      showToast("Choose an audio file first.");
-      return;
-    }
-
-    const formData = new FormData();
-    formData.append("audio", audio);
-
-    if (cover) {
-      formData.append("cover", cover);
-    }
-
-    if (uploadTargetPlaylistId) {
-      formData.append("playlistId", uploadTargetPlaylistId);
-    }
-
-    Object.entries(uploadForm).forEach(([key, value]) => {
-      if (!["audioName", "coverName"].includes(key)) {
-        formData.append(key, String(value));
-      }
-    });
-
-    setUploading(true);
-
-    try {
-      const result = await apiFetch("/api/tracks", {
-        method: "POST",
-        body: formData
-      });
-      const data = await result.json();
-
-      if (!result.ok) {
-        throw new Error(data.error || "Upload failed.");
-      }
-
-      setTracks((existing) => uniqueTracks([data.track, ...existing]));
-
-      if (uploadTargetPlaylistId) {
-        setPlaylists((existing) =>
-          existing.map((playlist) =>
-            playlist.id === uploadTargetPlaylistId && !playlist.trackIds.includes(data.track.id)
-              ? {
-                  ...playlist,
-                  trackIds: [...playlist.trackIds, data.track.id],
-                  tracks: playlist.tracks ? uniqueTracks([...playlist.tracks, data.track]) : playlist.tracks
-                }
-              : playlist
-          )
-        );
-      }
-
-      closeUpload();
-      setUploadForm({
-        title: "",
-        artist: "",
-        album: "",
-        genre: "Uploaded",
-        duration: 0,
-        audioName: "",
-        coverName: ""
-      });
-
-      if (uploadFileRef.current) {
-        uploadFileRef.current.value = "";
-      }
-
-      if (coverFileRef.current) {
-        coverFileRef.current.value = "";
-      }
-
-      showToast(uploadTargetPlaylistId ? "Song uploaded and added to this playlist." : "Song uploaded to MongoDB.");
-    } catch (error) {
-      showToast((error as Error).message);
-    } finally {
-      setUploading(false);
     }
   }
 
@@ -2052,7 +1685,7 @@ export function SpotifyApp() {
       <AuthScreen
         onAuthenticated={(nextUser) => {
           activateUser(nextUser);
-          loadLibrary().catch(() => showToast("Could not refresh the library."));
+          loadLibrary(nextUser.id).catch(() => showToast("Could not refresh the JioSaavn catalog."));
         }}
       />
     );
@@ -2084,20 +1717,20 @@ export function SpotifyApp() {
     : view === "liked"
       ? `${likedTracks.length} liked ${likedTracks.length === 1 ? "song" : "songs"}`
       : view === "songs"
-        ? `${allTracks.length} songs uploaded by the community`
+        ? `${allTracks.length} songs from JioSaavn`
         : view === "podcasts"
           ? `${podcastTracks.length} ${podcastTracks.length === 1 ? "podcast" : "podcasts"}`
           : view === "recent"
-            ? `${allTracks.length} songs sorted by newest uploads`
+            ? `${allTracks.length} songs sorted by latest release`
             : view === "most"
               ? `${allTopTracks.length} songs sorted by play count`
               : selectedPlaylist
-                ? `${selectedPlaylist.trackIds.length} songs by ${selectedPlaylist.ownerName}`
+                ? `${selectedPlaylist.trackIds.length || selectedPlaylist.tracks?.length || 0} songs by ${selectedPlaylist.ownerName}`
                 : selectedAlbumName
                   ? `${selectedAlbumTracks.length} ${selectedAlbumTracks.length === 1 ? "song" : "songs"} from this album`
                   : selectedArtistName
                     ? `${selectedArtistTracks.length} ${selectedArtistTracks.length === 1 ? "song" : "songs"} by this artist`
-                : `${tracks.length} songs uploaded by the community`;
+                : `${tracks.length} songs streaming from JioSaavn`;
   const activeKicker = search
     ? "Search"
     : selectedPlaylist || view === "liked"
@@ -2218,11 +1851,11 @@ export function SpotifyApp() {
 
         <button
           className="upload-top-button"
-          onClick={() => openUpload(selectedPlaylistOwned ? selectedPlaylist?.id : null)}
+          onClick={() => loadLibrary().catch(() => showToast("Could not refresh JioSaavn catalog."))}
           type="button"
         >
-          <Upload size={18} />
-          Add songs
+          <ListMusic size={18} />
+          Refresh catalog
         </button>
 
         <div className="top-actions">
@@ -2283,7 +1916,7 @@ export function SpotifyApp() {
                   <small>Songs</small>
                 </span>
                 <span>
-                  <strong>{ownPlaylists.length}</strong>
+                  <strong>{playlists.length}</strong>
                   <small>Playlists</small>
                 </span>
                 <span>
@@ -2294,18 +1927,6 @@ export function SpotifyApp() {
               <button onClick={handleInstallApp} role="menuitem" type="button">
                 <Download size={18} />
                 Install
-              </button>
-              <button
-                onClick={() => openUpload(selectedPlaylistOwned ? selectedPlaylist?.id : null)}
-                role="menuitem"
-                type="button"
-              >
-                <Upload size={18} />
-                Upload song
-              </button>
-              <button onClick={() => setPlaylistOpen(true)} role="menuitem" type="button">
-                <Plus size={18} />
-                Create playlist
               </button>
               <button onClick={handleLogout} role="menuitem" type="button">
                 <LogOut size={18} />
@@ -2327,8 +1948,8 @@ export function SpotifyApp() {
               <span>Your Library</span>
             </div>
             <div className="panel-actions">
-              <IconButton label="Create playlist" onClick={() => setPlaylistOpen(true)}>
-                <Plus size={22} />
+              <IconButton label="Refresh catalog" onClick={() => loadLibrary().catch(() => showToast("Could not refresh JioSaavn catalog."))}>
+                <ListMusic size={22} />
               </IconButton>
               <IconButton
                 label="Expand library"
@@ -2420,7 +2041,7 @@ export function SpotifyApp() {
                   <span>
                     <strong>{playlist.name}</strong>
                     <small>
-                      Recent {playlist.isPublic ? "public" : "private"} playlist · {playlist.trackIds.length} songs
+                      Recent JioSaavn playlist · {playlist.trackIds.length || "many"} songs
                     </small>
                   </span>
                 </button>
@@ -2438,7 +2059,7 @@ export function SpotifyApp() {
                   <span>
                     <strong>{playlist.name}</strong>
                     <small>
-                      {playlist.isPublic ? "Public" : "Private"} playlist · {playlist.trackIds.length} songs
+                      JioSaavn playlist · {playlist.trackIds.length || "many"} songs
                     </small>
                   </span>
                 </button>
@@ -2537,7 +2158,7 @@ export function SpotifyApp() {
                 <div className="credit-row">
                   <span>
                     <strong>{currentTrack.uploadedByName}</strong>
-                    <small>Uploader</small>
+                    <small>Source</small>
                   </span>
                   <button
                     className={isFollowing(currentTrack.uploadedByName) ? "active" : ""}
@@ -2574,7 +2195,7 @@ export function SpotifyApp() {
             <div className="empty-now">
               <Disc3 size={56} />
               <h3>Pick a song</h3>
-              <p>Your uploads and community tracks will appear here while playing.</p>
+              <p>JioSaavn songs, albums, and playlists will appear here while playing.</p>
             </div>
           )}
         </section>
@@ -2620,10 +2241,12 @@ export function SpotifyApp() {
                   <span>Liked Songs</span>
                 </button>
 
-                <button className="quick-tile upload-quick-tile" onClick={() => openUpload()} type="button">
-                  <PlaylistArtwork add />
-                  <span>Add songs</span>
-                </button>
+                {playlists[0] && (
+                  <button className="quick-tile upload-quick-tile" onClick={() => selectView(`playlist:${playlists[0].id}`)} type="button">
+                    <PlaylistArtwork playlist={playlists[0]} />
+                    <span>JioSaavn Playlists</span>
+                  </button>
+                )}
 
                 {homeQuickTracks.map((track) => (
                   <button className="quick-tile" key={track.id} onClick={() => playTrack(track, recentlyPlayedTracks)} type="button">
@@ -2733,80 +2356,8 @@ export function SpotifyApp() {
                     {selectedPlaylist && (
                       <span className="visibility-pill">{selectedPlaylist.isPublic ? "Public" : "Private"}</span>
                     )}
-                    {selectedPlaylist && selectedPlaylistOwned && (
-                      <>
-                        <button className="ghost-button" onClick={() => openUpload(selectedPlaylist.id)} type="button">
-                          <Upload size={17} />
-                          Add songs
-                        </button>
-                        <button
-                          className="ghost-button"
-                          disabled={playlistCoverSaving}
-                          onClick={() => selectedPlaylistCoverFileRef.current?.click()}
-                          type="button"
-                        >
-                          {playlistCoverSaving ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
-                          Edit cover
-                        </button>
-                        <input
-                          accept="image/*"
-                          className="sr-only-file"
-                          onChange={handleSelectedPlaylistCoverChange}
-                          ref={selectedPlaylistCoverFileRef}
-                          type="file"
-                        />
-                        <button
-                          className={`ghost-button ${selectedPlaylist.isPublic ? "active" : ""}`}
-                          onClick={() => handlePlaylistVisibility(!selectedPlaylist.isPublic)}
-                          type="button"
-                        >
-                          <UserRound size={17} />
-                          Make {selectedPlaylist.isPublic ? "private" : "public"}
-                        </button>
-                        <button className="ghost-button danger-button" onClick={handleDeletePlaylist} type="button">
-                          <Trash2 size={17} />
-                          Delete
-                        </button>
-                      </>
-                    )}
-                    {selectedAlbumName && (
-                      <>
-                        <button
-                          className="ghost-button"
-                          disabled={albumCoverSaving}
-                          onClick={() => albumCoverFileRef.current?.click()}
-                          type="button"
-                        >
-                          {albumCoverSaving ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
-                          Edit cover
-                        </button>
-                        <input
-                          accept="image/*"
-                          className="sr-only-file"
-                          onChange={handleAlbumCoverChange}
-                          ref={albumCoverFileRef}
-                          type="file"
-                        />
-                      </>
-                    )}
                     {selectedArtistName && (
                       <>
-                        <button
-                          className="ghost-button"
-                          disabled={artistCoverSaving}
-                          onClick={() => artistCoverFileRef.current?.click()}
-                          type="button"
-                        >
-                          {artistCoverSaving ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
-                          Edit cover
-                        </button>
-                        <input
-                          accept="image/*"
-                          className="sr-only-file"
-                          onChange={handleArtistCoverChange}
-                          ref={artistCoverFileRef}
-                          type="file"
-                        />
                         <button
                           className={`ghost-button ${isFollowing(selectedArtistName) ? "active" : ""}`}
                           onClick={() => toggleFollow(selectedArtistName)}
@@ -2829,8 +2380,8 @@ export function SpotifyApp() {
                   search
                     ? "Try a different title, artist, album, or genre."
                     : view === "podcasts"
-                      ? "Podcast uploads will appear here."
-                      : "Uploaded music from any user will appear in the shared catalog."
+                      ? "Podcasts from JioSaavn will appear here when available."
+                      : "Search JioSaavn to find more songs, albums, artists, and playlists."
                 }
                 emptyTitle={searchLoading ? "Searching..." : search ? "No songs found" : undefined}
                 onDelete={deleteTrack}
@@ -2921,7 +2472,7 @@ export function SpotifyApp() {
                   <div className="credit-row">
                     <span>
                       <strong>{currentTrack.uploadedByName}</strong>
-                      <small>Uploader</small>
+                      <small>Source</small>
                     </span>
                     <button
                       className={isFollowing(currentTrack.uploadedByName) ? "active" : ""}
@@ -2937,7 +2488,7 @@ export function SpotifyApp() {
               <div className="empty-now">
                 <Disc3 size={56} />
                 <h3>Pick a song</h3>
-                <p>Your uploads and community tracks will appear here while playing.</p>
+                <p>JioSaavn songs, albums, and playlists will appear here while playing.</p>
               </div>
             )}
 
@@ -2991,7 +2542,7 @@ export function SpotifyApp() {
           {currentTrack ? <Artwork track={currentTrack} size="sm" /> : <div className="empty-art" />}
           <span>
             <strong>{currentTrack?.title || "No song selected"}</strong>
-            <small>{currentTrack?.artist || "Upload or play a track"}</small>
+            <small>{currentTrack?.artist || "Search or play a track"}</small>
           </span>
           {currentTrack && (
             <IconButton
@@ -3056,10 +2607,6 @@ export function SpotifyApp() {
                       <small>{user.email}</small>
                     </span>
                   </div>
-                  <button onClick={() => setPlaylistOpen(true)} role="menuitem" type="button">
-                    <Plus size={18} />
-                    Create playlist
-                  </button>
                   <button onClick={handleInstallApp} role="menuitem" type="button">
                     <Download size={18} />
                     Install
@@ -3160,117 +2707,6 @@ export function SpotifyApp() {
         </div>
       </footer>
 
-      {uploadOpen && (
-        <Modal title={uploadTargetPlaylistId ? "Add song to playlist" : "Upload song"} onClose={closeUpload}>
-          <form className="upload-form" onSubmit={handleUpload}>
-            <label className="drop-field">
-              <Upload size={24} />
-              <span>{uploadForm.audioName || "Choose audio file"}</span>
-              <small>MP3, WAV, M4A, OGG up to 100MB</small>
-              <input accept="audio/*" onChange={handleAudioFileChange} ref={uploadFileRef} required type="file" />
-            </label>
-
-            <div className="form-grid">
-              <label>
-                <span>Title</span>
-                <input
-                  onChange={(event) => setUploadForm((existing) => ({ ...existing, title: event.target.value }))}
-                  required
-                  value={uploadForm.title}
-                />
-              </label>
-              <label>
-                <span>Artist</span>
-                <input
-                  onChange={(event) => setUploadForm((existing) => ({ ...existing, artist: event.target.value }))}
-                  placeholder={user.name}
-                  value={uploadForm.artist}
-                />
-              </label>
-              <label>
-                <span>Album</span>
-                <input
-                  onChange={(event) => setUploadForm((existing) => ({ ...existing, album: event.target.value }))}
-                  placeholder="Single"
-                  value={uploadForm.album}
-                />
-              </label>
-              <label>
-                <span>Genre</span>
-                <input
-                  onChange={(event) => setUploadForm((existing) => ({ ...existing, genre: event.target.value }))}
-                  value={uploadForm.genre}
-                />
-              </label>
-            </div>
-
-            <label className="cover-field">
-              <Download size={19} />
-              <span>{uploadForm.coverName || "Optional cover image"}</span>
-              <input accept="image/*" onChange={handleCoverFileChange} ref={coverFileRef} type="file" />
-            </label>
-
-            <button className="primary-auth-button" disabled={uploading} type="submit">
-              {uploading ? <Loader2 className="spin" size={18} /> : <Upload size={18} />}
-              {uploadTargetPlaylistId ? "Save to playlist" : "Save to MongoDB"}
-            </button>
-          </form>
-        </Modal>
-      )}
-
-      {playlistOpen && (
-        <Modal title="Create playlist" onClose={() => setPlaylistOpen(false)}>
-          <form className="playlist-form" onSubmit={handleCreatePlaylist}>
-            <label>
-              <span>Name</span>
-              <input
-                autoFocus
-                onChange={(event) => setPlaylistForm((existing) => ({ ...existing, name: event.target.value }))}
-                placeholder="My playlist"
-                required
-                value={playlistForm.name}
-              />
-            </label>
-            <label>
-              <span>Description</span>
-              <textarea
-                onChange={(event) =>
-                  setPlaylistForm((existing) => ({ ...existing, description: event.target.value }))
-                }
-                placeholder="A few words about the vibe"
-                rows={3}
-                value={playlistForm.description}
-              />
-            </label>
-            <label className="cover-field">
-              <Download size={19} />
-              <span>{playlistForm.coverName || "Optional playlist cover"}</span>
-              <input accept="image/*" onChange={handlePlaylistCoverFileChange} ref={playlistCoverFileRef} type="file" />
-            </label>
-            <div className="visibility-options" role="group" aria-label="Playlist visibility">
-              <button
-                className={!playlistForm.isPublic ? "active" : ""}
-                onClick={() => setPlaylistForm((existing) => ({ ...existing, isPublic: false }))}
-                type="button"
-              >
-                Private
-              </button>
-              <button
-                className={playlistForm.isPublic ? "active" : ""}
-                onClick={() => setPlaylistForm((existing) => ({ ...existing, isPublic: true }))}
-                type="button"
-              >
-                Public
-              </button>
-            </div>
-            <button className="primary-auth-button" disabled={playlistSaving} type="submit">
-              {playlistSaving ? <Loader2 className="spin" size={18} /> : <Plus size={18} />}
-              Create playlist
-            </button>
-          </form>
-        </Modal>
-      )}
-
       {queueOpen && (
         <Modal title="Queue" onClose={() => setQueueOpen(false)}>
           <QueueList
@@ -3351,7 +2787,7 @@ function Shelf({ canDeleteTrack, onDelete, onLike, onPlay, onQueue, onShowAll, t
         </div>
         <div className="empty-shelf">
           <Music size={34} />
-          <span>Upload songs to fill this shelf.</span>
+          <span>Search JioSaavn to fill this shelf.</span>
         </div>
       </section>
     );

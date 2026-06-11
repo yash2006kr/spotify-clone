@@ -1,4 +1,3 @@
-import { ObjectId } from "mongodb";
 import { NextResponse } from "next/server";
 
 import { requireUser } from "@/lib/auth";
@@ -10,30 +9,29 @@ type RouteContext = {
   params: Promise<{ trackId: string }>;
 };
 
+function safeTrackId(trackId: string) {
+  return decodeURIComponent(trackId).trim();
+}
+
 export async function POST(_request: Request, context: RouteContext) {
   try {
     const user = await requireUser();
     const { trackId } = await context.params;
+    const id = safeTrackId(trackId);
 
-    if (!ObjectId.isValid(trackId)) {
+    if (!id) {
       return NextResponse.json({ error: "Track not found." }, { status: 404 });
     }
 
     await ensureIndexes();
     const db = await getDb();
-    const trackObjectId = new ObjectId(trackId);
-    const track = await db.collection("tracks").findOne({ _id: trackObjectId });
-
-    if (!track) {
-      return NextResponse.json({ error: "Track not found." }, { status: 404 });
-    }
 
     await db.collection("likes").updateOne(
-      { userId: user._id, trackId: trackObjectId },
+      { userId: user._id, trackId: id },
       {
         $setOnInsert: {
           userId: user._id,
-          trackId: trackObjectId,
+          trackId: id,
           createdAt: new Date()
         }
       },
@@ -55,13 +53,14 @@ export async function DELETE(_request: Request, context: RouteContext) {
   try {
     const user = await requireUser();
     const { trackId } = await context.params;
+    const id = safeTrackId(trackId);
 
-    if (!ObjectId.isValid(trackId)) {
+    if (!id) {
       return NextResponse.json({ error: "Track not found." }, { status: 404 });
     }
 
     const db = await getDb();
-    await db.collection("likes").deleteOne({ userId: user._id, trackId: new ObjectId(trackId) });
+    await db.collection("likes").deleteOne({ userId: user._id, trackId: id });
 
     return NextResponse.json({ liked: false });
   } catch (error) {
