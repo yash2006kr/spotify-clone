@@ -21,6 +21,9 @@ export type Track = {
   coverUrl: string | null;
   sourceUrl?: string;
   albumId?: string;
+  downloaded?: boolean;
+  downloadedAt?: string;
+  offlineSize?: number;
   missing?: boolean;
 };
 

@@ -49,13 +49,14 @@ type ViewState =
   | "home"
   | "liked"
   | "songs"
+  | "downloads"
   | "podcasts"
   | "recent"
   | "most"
   | `playlist:${string}`
   | `album:${string}`
   | `artist:${string}`;
-type LibraryFilter = "all" | "playlists" | "albums" | "artists";
+type LibraryFilter = "all" | "playlists" | "albums" | "artists" | "downloads";
 type RepeatMode = "off" | "all" | "one";
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -64,6 +65,13 @@ type BeforeInstallPromptEvent = Event & {
 type ArtistCoverPayload = {
   artist: string;
   coverUrl: string;
+};
+type OfflineTrackRecord = {
+  id: string;
+  track: Track;
+  audio: Blob;
+  downloadedAt: string;
+  size: number;
 };
 
 const gradients = [
@@ -85,6 +93,8 @@ const loadingMessages = [
   "Checking the stage lights for your next song."
 ];
 const spotifyLogoSrc = "/spotify-logo.jpeg";
+const offlineDbName = "spotify-offline-downloads";
+const offlineStoreName = "songs";
 const guestUser: AppUser = {
   id: "guest",
   name: "Guest listener",
@@ -276,6 +286,83 @@ function saveIdList(key: string, ids: string[]) {
   }
 }
 
+function openOfflineDb() {
+  return new Promise<IDBDatabase>((resolve, reject) => {
+    const request = indexedDB.open(offlineDbName, 1);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+
+      if (!db.objectStoreNames.contains(offlineStoreName)) {
+        db.createObjectStore(offlineStoreName, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error("Unable to open offline downloads."));
+  });
+}
+
+async function readOfflineRecords() {
+  if (typeof indexedDB === "undefined") {
+    return [];
+  }
+
+  const db = await openOfflineDb();
+
+  return new Promise<OfflineTrackRecord[]>((resolve, reject) => {
+    const transaction = db.transaction(offlineStoreName, "readonly");
+    const request = transaction.objectStore(offlineStoreName).getAll();
+
+    request.onsuccess = () => resolve((request.result || []) as OfflineTrackRecord[]);
+    request.onerror = () => reject(request.error || new Error("Unable to read offline downloads."));
+    transaction.oncomplete = () => db.close();
+  });
+}
+
+async function saveOfflineRecord(track: Track, audio: Blob) {
+  const db = await openOfflineDb();
+  const downloadedAt = new Date().toISOString();
+  const record: OfflineTrackRecord = {
+    id: track.id,
+    track: { ...track, downloaded: true, downloadedAt, offlineSize: audio.size },
+    audio,
+    downloadedAt,
+    size: audio.size
+  };
+
+  return new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(offlineStoreName, "readwrite");
+
+    transaction.objectStore(offlineStoreName).put(record);
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error || new Error("Unable to save offline download."));
+    };
+  });
+}
+
+async function deleteOfflineRecord(trackId: string) {
+  const db = await openOfflineDb();
+
+  return new Promise<void>((resolve, reject) => {
+    const transaction = db.transaction(offlineStoreName, "readwrite");
+
+    transaction.objectStore(offlineStoreName).delete(trackId);
+    transaction.oncomplete = () => {
+      db.close();
+      resolve();
+    };
+    transaction.onerror = () => {
+      db.close();
+      reject(transaction.error || new Error("Unable to remove offline download."));
+    };
+  });
+}
+
 function artistKey(artist: string) {
   return artist.trim().toLowerCase();
 }
@@ -385,6 +472,7 @@ function IconButton({ active, className = "", disabled, label, onClick, children
 
 export function SpotifyApp() {
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const offlineObjectUrlsRef = useRef<Record<string, string>>({});
   const mobileDetailsDragStart = useRef<number | null>(null);
   const pendingAutoPlayRef = useRef(false);
   const handledEndedTrackRef = useRef<string | null>(null);
@@ -393,6 +481,8 @@ export function SpotifyApp() {
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [user, setUser] = useState<AppUser | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
+  const [downloadedTracks, setDownloadedTracks] = useState<Track[]>([]);
+  const [downloadingIds, setDownloadingIds] = useState<Set<string>>(() => new Set());
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [view, setView] = useState<ViewState>("home");
   const [lastView, setLastView] = useState<ViewState | null>(null);
@@ -452,12 +542,48 @@ export function SpotifyApp() {
     window.setTimeout(() => setToast(""), 2600);
   }, []);
 
+  const refreshOfflineDownloads = useCallback(async () => {
+    const records = await readOfflineRecords();
+    const nextUrls: Record<string, string> = {};
+    const nextTracks = records
+      .map((record) => {
+        const objectUrl = URL.createObjectURL(record.audio);
+        nextUrls[record.id] = objectUrl;
+
+        return {
+          ...record.track,
+          audioUrl: objectUrl,
+          downloaded: true,
+          downloadedAt: record.downloadedAt,
+          offlineSize: record.size
+        };
+      })
+      .sort((a, b) => +new Date(b.downloadedAt || 0) - +new Date(a.downloadedAt || 0));
+
+    Object.values(offlineObjectUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+    offlineObjectUrlsRef.current = nextUrls;
+    setDownloadedTracks(nextTracks);
+    return nextTracks;
+  }, []);
+
   const activateUser = useCallback((nextUser: AppUser) => {
     setFollowedArtists(loadFollowedArtists(nextUser.id));
     setRecentPlayedIds(loadIdList(`spotify:recent-tracks:${nextUser.id}`).slice(0, 12));
     setRecentPlaylistIds(loadIdList(`spotify:recent-playlists:${nextUser.id}`).slice(0, 8));
     setUser(nextUser);
   }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      refreshOfflineDownloads().catch(() => showToast("Could not load offline downloads."));
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      Object.values(offlineObjectUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+      offlineObjectUrlsRef.current = {};
+    };
+  }, [refreshOfflineDownloads, showToast]);
 
   const resetHomeView = useCallback(() => {
     setView("home");
@@ -723,17 +849,41 @@ export function SpotifyApp() {
     apiFetch(`/api/tracks/${currentTrack.id}/play`, { method: "POST" }).catch(() => undefined);
   }, [currentTrack]);
 
-  const likedTracks = useMemo(() => tracks.filter((track) => track.liked), [tracks]);
+  const downloadedById = useMemo(
+    () => new Map(downloadedTracks.map((track) => [track.id, track])),
+    [downloadedTracks]
+  );
+  const catalogTracks = useMemo(
+    () =>
+      uniqueTracks([
+        ...tracks.map((track) => {
+          const downloaded = downloadedById.get(track.id);
+
+          return downloaded
+            ? {
+                ...track,
+                audioUrl: downloaded.audioUrl,
+                downloaded: true,
+                downloadedAt: downloaded.downloadedAt,
+                offlineSize: downloaded.offlineSize
+              }
+            : track;
+        }),
+        ...downloadedTracks
+      ]),
+    [downloadedById, downloadedTracks, tracks]
+  );
+  const likedTracks = useMemo(() => catalogTracks.filter((track) => track.liked), [catalogTracks]);
 
   const filteredTracks = useMemo(() => {
     const query = search.trim().toLowerCase();
 
     if (!query) {
-      return newestFirst(tracks);
+      return newestFirst(catalogTracks);
     }
 
-    return newestFirst(tracks.filter((track) => trackMatchesQuery(track, query)));
-  }, [search, tracks]);
+    return newestFirst(catalogTracks.filter((track) => trackMatchesQuery(track, query)));
+  }, [catalogTracks, search]);
 
   useEffect(() => {
     const query = search.trim();
@@ -758,7 +908,7 @@ export function SpotifyApp() {
         }
 
         const data = await result.json();
-        const nextTracks = data.tracks || [];
+        const nextTracks = ((data.tracks || []) as Track[]).map((track) => downloadedById.get(track.id) || track);
         setSearchResults(nextTracks);
         setTracks((existing) => uniqueTracks([...nextTracks, ...existing]));
       } catch {
@@ -776,7 +926,7 @@ export function SpotifyApp() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [search, user]);
+  }, [downloadedById, search, user]);
 
   const selectedPlaylistId = view.startsWith("playlist:") ? view.slice("playlist:".length) : "";
   const selectedAlbumName = collectionValue(view, "album");
@@ -830,16 +980,21 @@ export function SpotifyApp() {
 
     if (selectedPlaylist.tracks?.length) {
       return selectedPlaylist.trackIds
-        .map((id) => selectedPlaylist.tracks?.find((track) => track.id === id) || tracks.find((track) => track.id === id))
+        .map(
+          (id) =>
+            downloadedById.get(id) ||
+            selectedPlaylist.tracks?.find((track) => track.id === id) ||
+            catalogTracks.find((track) => track.id === id)
+        )
         .filter((track): track is Track => Boolean(track));
     }
 
     return selectedPlaylist.trackIds
-      .map((id) => tracks.find((track) => track.id === id))
+      .map((id) => downloadedById.get(id) || catalogTracks.find((track) => track.id === id))
       .filter((track): track is Track => Boolean(track));
-  }, [selectedPlaylist, tracks]);
+  }, [catalogTracks, downloadedById, selectedPlaylist]);
 
-  const allTracks = useMemo(() => newestFirst(tracks), [tracks]);
+  const allTracks = useMemo(() => newestFirst(catalogTracks), [catalogTracks]);
   const selectedAlbumTracks = useMemo(
     () => (selectedAlbumName ? allTracks.filter((track) => track.album === selectedAlbumName) : []),
     [allTracks, selectedAlbumName]
@@ -919,7 +1074,7 @@ export function SpotifyApp() {
     [libraryArtists, libraryQuery]
   );
   const podcastTracks = useMemo(() => allTracks.filter(isPodcastTrack), [allTracks]);
-  const allTopTracks = useMemo(() => [...tracks].sort((a, b) => b.plays - a.plays), [tracks]);
+  const allTopTracks = useMemo(() => [...allTracks].sort((a, b) => b.plays - a.plays), [allTracks]);
   const scopedSearchBase = useMemo(() => {
     if (selectedPlaylist) {
       return selectedPlaylistTracks;
@@ -935,6 +1090,10 @@ export function SpotifyApp() {
 
     if (view === "liked") {
       return likedTracks;
+    }
+
+    if (view === "downloads") {
+      return downloadedTracks;
     }
 
     if (view === "songs" || view === "recent") {
@@ -954,6 +1113,7 @@ export function SpotifyApp() {
     allTopTracks,
     allTracks,
     likedTracks,
+    downloadedTracks,
     podcastTracks,
     selectedAlbumName,
     selectedAlbumTracks,
@@ -984,6 +1144,10 @@ export function SpotifyApp() {
 
     if (view === "liked") {
       return likedTracks;
+    }
+
+    if (view === "downloads") {
+      return downloadedTracks;
     }
 
     if (view === "songs") {
@@ -1020,6 +1184,7 @@ export function SpotifyApp() {
     allTracks,
     filteredTracks,
     likedTracks,
+    downloadedTracks,
     podcastTracks,
     search,
     searchTracks,
@@ -1042,11 +1207,11 @@ export function SpotifyApp() {
   ]);
   const recentlyPlayedTracks = useMemo(() => {
     const ordered = recentPlayedIds
-      .map((id) => tracks.find((track) => track.id === id))
+      .map((id) => allTracks.find((track) => track.id === id))
       .filter((track): track is Track => Boolean(track));
 
     return ordered.length ? ordered : recentTracks;
-  }, [recentPlayedIds, recentTracks, tracks]);
+  }, [allTracks, recentPlayedIds, recentTracks]);
   const recentLibraryPlaylists = useMemo(
     () =>
       recentPlaylistIds
@@ -1160,8 +1325,8 @@ export function SpotifyApp() {
     }
 
     if (!playbackList.length) {
-      if (tracks[0]) {
-        playTrack(tracks[0], tracks);
+      if (allTracks[0]) {
+        playTrack(allTracks[0], allTracks);
       }
       return;
     }
@@ -1190,7 +1355,7 @@ export function SpotifyApp() {
       return;
     }
 
-    const fallbackList = playbackList.length ? playbackList : tracks;
+    const fallbackList = playbackList.length ? playbackList : allTracks;
     const next = fallbackList[0];
 
     if (next) {
@@ -1201,7 +1366,7 @@ export function SpotifyApp() {
       setCurrentTime(0);
       setIsPlaying(true);
     }
-  }, [manualQueue, playFromManualQueue, playTrack, playbackIndex, playbackList, shuffleOn, tracks]);
+  }, [allTracks, manualQueue, playFromManualQueue, playTrack, playbackIndex, playbackList, shuffleOn]);
 
   const playPrevious = useCallback(() => {
     const audio = audioRef.current;
@@ -1352,6 +1517,80 @@ export function SpotifyApp() {
       saveIdList(likeKey, [...likedIds]);
     },
     [showToast, updateTrackEverywhere, user?.id]
+  );
+
+  const downloadTrack = useCallback(
+    async (track: Track) => {
+      if (isMissingTrack(track) || downloadingIds.has(track.id)) {
+        return;
+      }
+
+      setDownloadingIds((existing) => new Set(existing).add(track.id));
+
+      try {
+        const result = await apiFetch(`/api/tracks/${encodeURIComponent(track.id)}/download`, { cache: "no-store" });
+
+        if (!result.ok) {
+          const data = await result.json().catch(() => ({}));
+          throw new Error(data.error || "Could not download this song.");
+        }
+
+        const audio = await result.blob();
+
+        if (!audio.size) {
+          throw new Error("The downloaded song was empty.");
+        }
+
+        const persistedTrack = {
+          ...track,
+          audioUrl: `/api/tracks/${encodeURIComponent(track.id)}/stream`,
+          downloaded: true,
+          downloadedAt: new Date().toISOString(),
+          offlineSize: audio.size
+        };
+
+        await saveOfflineRecord(persistedTrack, audio);
+        const nextDownloads = await refreshOfflineDownloads();
+        const downloadedTrack = nextDownloads.find((item) => item.id === track.id);
+        updateTrackEverywhere(track.id, (item) => ({
+          ...item,
+          audioUrl: downloadedTrack?.audioUrl || item.audioUrl,
+          downloaded: true,
+          downloadedAt: downloadedTrack?.downloadedAt || persistedTrack.downloadedAt,
+          offlineSize: audio.size
+        }));
+        showToast(`Downloaded "${track.title}" for offline playback.`);
+      } catch (error) {
+        showToast((error as Error).message);
+      } finally {
+        setDownloadingIds((existing) => {
+          const next = new Set(existing);
+          next.delete(track.id);
+          return next;
+        });
+      }
+    },
+    [downloadingIds, refreshOfflineDownloads, showToast, updateTrackEverywhere]
+  );
+
+  const removeDownload = useCallback(
+    async (track: Track) => {
+      try {
+        await deleteOfflineRecord(track.id);
+        await refreshOfflineDownloads();
+        updateTrackEverywhere(track.id, (item) => ({
+          ...item,
+          audioUrl: `/api/tracks/${encodeURIComponent(item.id)}/stream`,
+          downloaded: false,
+          downloadedAt: undefined,
+          offlineSize: undefined
+        }));
+        showToast(`Removed "${track.title}" from downloads.`);
+      } catch (error) {
+        showToast((error as Error).message);
+      }
+    },
+    [refreshOfflineDownloads, showToast, updateTrackEverywhere]
   );
 
   const deleteTrack = useCallback(
@@ -1594,8 +1833,8 @@ export function SpotifyApp() {
       setProfileOpen(false);
       setQueueOpen(false);
       setMobileNowOpen(false);
-      activateUser(guestUser);
-      loadLibrary(guestUser.id).catch(() => showToast("Could not refresh the JioSaavn catalog."));
+      setMobileLibraryOpen(false);
+      setUser(null);
     }
   }
 
@@ -1697,6 +1936,8 @@ export function SpotifyApp() {
       ? "Liked Songs"
       : view === "songs"
         ? "Songs"
+        : view === "downloads"
+          ? "Downloads"
         : view === "podcasts"
           ? "Podcasts"
           : view === "recent"
@@ -1718,6 +1959,8 @@ export function SpotifyApp() {
       ? `${likedTracks.length} liked ${likedTracks.length === 1 ? "song" : "songs"}`
       : view === "songs"
         ? `${allTracks.length} songs from JioSaavn`
+        : view === "downloads"
+          ? `${downloadedTracks.length} downloaded ${downloadedTracks.length === 1 ? "song" : "songs"} available offline`
         : view === "podcasts"
           ? `${podcastTracks.length} ${podcastTracks.length === 1 ? "podcast" : "podcasts"}`
           : view === "recent"
@@ -1735,6 +1978,8 @@ export function SpotifyApp() {
     ? "Search"
     : selectedPlaylist || view === "liked"
       ? "Playlist"
+      : view === "downloads"
+        ? "Offline"
       : selectedAlbumName
         ? "Album"
         : selectedArtistName
@@ -1742,7 +1987,7 @@ export function SpotifyApp() {
           : "Collection";
   const collectionCoverTrack = selectedAlbumTracks[0] || selectedArtistTracks[0] || null;
   const selectedArtistCoverUrl = selectedArtistName ? artistCovers[artistKey(selectedArtistName)] || null : null;
-  const compactCollectionIcon = Boolean(search || ["songs", "podcasts", "recent", "most"].includes(view));
+  const compactCollectionIcon = Boolean(search || ["songs", "downloads", "podcasts", "recent", "most"].includes(view));
   const collectionAccent = selectedPlaylist
     ? safeHexColor(selectedPlaylist.coverColor, "#477875")
     : view === "liked"
@@ -1982,6 +2227,13 @@ export function SpotifyApp() {
             >
               Artists
             </button>
+            <button
+              className={libraryFilter === "downloads" ? "active" : ""}
+              type="button"
+              onClick={() => setLibraryFilter((filter) => (filter === "downloads" ? "all" : "downloads"))}
+            >
+              Downloads
+            </button>
           </div>
 
           <div className="library-subbar">
@@ -2009,6 +2261,22 @@ export function SpotifyApp() {
                 <span>
                   <strong>Liked Songs</strong>
                   <small>Playlist · {likedTracks.length} songs</small>
+                </span>
+              </button>
+            )}
+
+            {(libraryFilter === "all" || libraryFilter === "downloads") && (
+              <button
+                className={`library-item ${view === "downloads" ? "selected" : ""}`}
+                onClick={() => selectView("downloads")}
+                type="button"
+              >
+                <span className="library-download-art">
+                  <Download size={20} />
+                </span>
+                <span>
+                  <strong>Downloads</strong>
+                  <small>Offline · {downloadedTracks.length} songs</small>
                 </span>
               </button>
             )}
@@ -2097,6 +2365,22 @@ export function SpotifyApp() {
                 </button>
               ))}
 
+            {libraryFilter === "downloads" &&
+              downloadedTracks.map((track) => (
+                <button
+                  className={`library-item ${currentTrack?.id === track.id ? "selected" : ""}`}
+                  key={`download-${track.id}`}
+                  onClick={() => playTrack(track, downloadedTracks)}
+                  type="button"
+                >
+                  <Artwork track={track} size="sm" />
+                  <span>
+                    <strong>{track.title}</strong>
+                    <small>{track.artist}</small>
+                  </span>
+                </button>
+              ))}
+
             {libraryLoading && (
               <div className="library-empty">
                 <Loader2 className="spin" size={20} />
@@ -2132,9 +2416,19 @@ export function SpotifyApp() {
                   <h3>{currentTrack.title}</h3>
                   <p>{currentTrack.artist}</p>
                 </div>
-                <IconButton active={currentTrack.liked} label="Like song" onClick={() => toggleLike(currentTrack)}>
-                  <Heart fill={currentTrack.liked ? "currentColor" : "none"} size={21} />
-                </IconButton>
+                <div className="now-title-actions">
+                  <IconButton
+                    active={currentTrack.downloaded}
+                    disabled={downloadingIds.has(currentTrack.id)}
+                    label={currentTrack.downloaded ? "Remove download" : "Download offline"}
+                    onClick={() => (currentTrack.downloaded ? removeDownload(currentTrack) : downloadTrack(currentTrack))}
+                  >
+                    {downloadingIds.has(currentTrack.id) ? <Loader2 className="spin" size={21} /> : <Download size={21} />}
+                  </IconButton>
+                  <IconButton active={currentTrack.liked} label="Like song" onClick={() => toggleLike(currentTrack)}>
+                    <Heart fill={currentTrack.liked ? "currentColor" : "none"} size={21} />
+                  </IconButton>
+                </div>
               </div>
 
               <section className="credits-box">
@@ -2178,7 +2472,7 @@ export function SpotifyApp() {
 
                 {nextQueueTracks.length ? (
                   nextQueueTracks.map((track) => (
-                    <button className="queue-item" key={`${track.id}-mobile-queue`} onClick={() => playTrack(track, tracks)} type="button">
+                  <button className="queue-item" key={`${track.id}-mobile-queue`} onClick={() => playTrack(track, allTracks)} type="button">
                       <Artwork track={track} size="sm" />
                       <span>
                         <strong>{track.title}</strong>
@@ -2263,9 +2557,12 @@ export function SpotifyApp() {
               <Shelf
                 title="Jump back in"
                 tracks={homeJumpTracks}
+                downloadingIds={downloadingIds}
                 onPlay={playTrack}
                 onQueue={addToQueue}
                 onLike={toggleLike}
+                onDownload={downloadTrack}
+                onRemoveDownload={removeDownload}
                 onDelete={deleteTrack}
                 canDeleteTrack={canDeleteTrack}
                 onShowAll={() => selectView("songs")}
@@ -2273,9 +2570,12 @@ export function SpotifyApp() {
               <Shelf
                 title="Recents"
                 tracks={homeRecentTracks}
+                downloadingIds={downloadingIds}
                 onPlay={playTrack}
                 onQueue={addToQueue}
                 onLike={toggleLike}
+                onDownload={downloadTrack}
+                onRemoveDownload={removeDownload}
                 onDelete={deleteTrack}
                 canDeleteTrack={canDeleteTrack}
                 onShowAll={() => selectView("recent")}
@@ -2283,9 +2583,12 @@ export function SpotifyApp() {
               <Shelf
                 title="Most played"
                 tracks={homeTopTracks}
+                downloadingIds={downloadingIds}
                 onPlay={playTrack}
                 onQueue={addToQueue}
                 onLike={toggleLike}
+                onDownload={downloadTrack}
+                onRemoveDownload={removeDownload}
                 onDelete={deleteTrack}
                 canDeleteTrack={canDeleteTrack}
                 onShowAll={() => selectView("most")}
@@ -2327,7 +2630,7 @@ export function SpotifyApp() {
                   <div className="collection-title-row">
                     {compactCollectionIcon && (
                       <span className="collection-title-icon">
-                        <Search size={24} />
+                        {view === "downloads" ? <Download size={24} /> : <Search size={24} />}
                       </span>
                     )}
                     <h1>{activeTitle}</h1>
@@ -2376,6 +2679,7 @@ export function SpotifyApp() {
                 addToPlaylist={addToPlaylist}
                 canDeleteTrack={canDeleteTrack}
                 currentTrack={currentTrack}
+                downloadingIds={downloadingIds}
                 emptyDescription={
                   search
                     ? "Try a different title, artist, album, or genre."
@@ -2385,9 +2689,11 @@ export function SpotifyApp() {
                 }
                 emptyTitle={searchLoading ? "Searching..." : search ? "No songs found" : undefined}
                 onDelete={deleteTrack}
+                onDownload={downloadTrack}
                 onLike={toggleLike}
                 onPlay={playTrack}
                 onQueue={addToQueue}
+                onRemoveDownload={removeDownload}
                 onRemove={selectedPlaylist && selectedPlaylistOwned ? removeFromPlaylist : undefined}
                 playlists={ownPlaylists}
                 source={playableActiveTracks}
@@ -2442,14 +2748,24 @@ export function SpotifyApp() {
               <>
                 <Artwork track={currentTrack} size="hero" />
                 <div className="now-title-line">
-                  <div>
-                    <h3>{currentTrack.title}</h3>
-                    <p>{currentTrack.artist}</p>
-                  </div>
-                  <IconButton active={currentTrack.liked} label="Like song" onClick={() => toggleLike(currentTrack)}>
-                    <Heart fill={currentTrack.liked ? "currentColor" : "none"} size={21} />
-                  </IconButton>
+                <div>
+                  <h3>{currentTrack.title}</h3>
+                  <p>{currentTrack.artist}</p>
                 </div>
+                  <div className="now-title-actions">
+                    <IconButton
+                      active={currentTrack.downloaded}
+                      disabled={downloadingIds.has(currentTrack.id)}
+                      label={currentTrack.downloaded ? "Remove download" : "Download offline"}
+                      onClick={() => (currentTrack.downloaded ? removeDownload(currentTrack) : downloadTrack(currentTrack))}
+                    >
+                      {downloadingIds.has(currentTrack.id) ? <Loader2 className="spin" size={21} /> : <Download size={21} />}
+                    </IconButton>
+                    <IconButton active={currentTrack.liked} label="Like song" onClick={() => toggleLike(currentTrack)}>
+                      <Heart fill={currentTrack.liked ? "currentColor" : "none"} size={21} />
+                    </IconButton>
+                  </div>
+              </div>
 
                 <section className="credits-box">
                   <div className="credits-title">
@@ -2500,7 +2816,7 @@ export function SpotifyApp() {
 
               {nextQueueTracks.length ? (
                 nextQueueTracks.map((track) => (
-                  <button className="queue-item" key={`${track.id}-queue`} onClick={() => playTrack(track, tracks)} type="button">
+                  <button className="queue-item" key={`${track.id}-queue`} onClick={() => playTrack(track, allTracks)} type="button">
                     <Artwork track={track} size="sm" />
                     <span>
                       <strong>{track.title}</strong>
@@ -2545,16 +2861,33 @@ export function SpotifyApp() {
             <small>{currentTrack?.artist || "Search or play a track"}</small>
           </span>
           {currentTrack && (
-            <IconButton
-              active={currentTrack.liked}
-              label="Like song"
-              onClick={(event) => {
-                event.stopPropagation();
-                toggleLike(currentTrack);
-              }}
-            >
-              <Heart fill={currentTrack.liked ? "currentColor" : "none"} size={18} />
-            </IconButton>
+            <span className="player-track-actions">
+              <IconButton
+                active={currentTrack.downloaded}
+                disabled={downloadingIds.has(currentTrack.id)}
+                label={currentTrack.downloaded ? "Remove download" : "Download offline"}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (currentTrack.downloaded) {
+                    removeDownload(currentTrack);
+                  } else {
+                    downloadTrack(currentTrack);
+                  }
+                }}
+              >
+                {downloadingIds.has(currentTrack.id) ? <Loader2 className="spin" size={18} /> : <Download size={18} />}
+              </IconButton>
+              <IconButton
+                active={currentTrack.liked}
+                label="Like song"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  toggleLike(currentTrack);
+                }}
+              >
+                <Heart fill={currentTrack.liked ? "currentColor" : "none"} size={18} />
+              </IconButton>
+            </span>
           )}
         </div>
 
@@ -2635,10 +2968,10 @@ export function SpotifyApp() {
             <button
               aria-label={isPlaying ? "Pause" : "Play"}
               className="play-button"
-              disabled={!currentTrack && !tracks.length}
+              disabled={!currentTrack && !allTracks.length}
               onClick={() => {
-                if (!currentTrack && tracks[0]) {
-                  playTrack(tracks[0], tracks);
+                if (!currentTrack && allTracks[0]) {
+                  playTrack(allTracks[0], allTracks);
                   return;
                 }
 
@@ -2649,7 +2982,7 @@ export function SpotifyApp() {
             >
               {isPlaying ? <Pause fill="currentColor" size={22} /> : <Play fill="currentColor" size={22} />}
             </button>
-            <IconButton label="Next" onClick={playNext} disabled={!currentTrack && !tracks.length}>
+            <IconButton label="Next" onClick={playNext} disabled={!currentTrack && !allTracks.length}>
               <SkipForward fill="currentColor" size={21} />
             </IconButton>
             <IconButton active={repeatMode !== "off"} label={`Repeat ${repeatMode}`} onClick={cycleRepeat}>
@@ -2713,7 +3046,7 @@ export function SpotifyApp() {
             currentTrack={currentTrack}
             onClear={() => setManualQueue([])}
             onPlay={(track) => {
-              playTrack(track, tracks);
+              playTrack(track, allTracks);
               setQueueOpen(false);
             }}
             tracks={nextQueueTracks}
@@ -2769,16 +3102,31 @@ export function SpotifyApp() {
 
 type ShelfProps = {
   canDeleteTrack: (track: Track) => boolean;
+  downloadingIds: Set<string>;
   onDelete: (track: Track) => void;
+  onDownload: (track: Track) => void;
   onLike: (track: Track) => void;
   onPlay: (track: Track, source: Track[]) => void;
   onQueue: (track: Track) => void;
+  onRemoveDownload: (track: Track) => void;
   onShowAll: () => void;
   title: string;
   tracks: Track[];
 };
 
-function Shelf({ canDeleteTrack, onDelete, onLike, onPlay, onQueue, onShowAll, title, tracks }: ShelfProps) {
+function Shelf({
+  canDeleteTrack,
+  downloadingIds,
+  onDelete,
+  onDownload,
+  onLike,
+  onPlay,
+  onQueue,
+  onRemoveDownload,
+  onShowAll,
+  title,
+  tracks
+}: ShelfProps) {
   if (!tracks.length) {
     return (
       <section className="shelf">
@@ -2811,6 +3159,14 @@ function Shelf({ canDeleteTrack, onDelete, onLike, onPlay, onQueue, onShowAll, t
             <h3>{track.title}</h3>
             <p>{track.artist}</p>
             <div className="card-actions">
+              <IconButton
+                active={track.downloaded}
+                disabled={downloadingIds.has(track.id)}
+                label={track.downloaded ? "Remove download" : "Download offline"}
+                onClick={() => (track.downloaded ? onRemoveDownload(track) : onDownload(track))}
+              >
+                {downloadingIds.has(track.id) ? <Loader2 className="spin" size={18} /> : <Download size={18} />}
+              </IconButton>
               <IconButton active={track.liked} label="Like" onClick={() => onLike(track)}>
                 <Heart fill={track.liked ? "currentColor" : "none"} size={18} />
               </IconButton>
@@ -2834,12 +3190,15 @@ type TrackTableProps = {
   addToPlaylist: (playlistId: string, track: Track) => void;
   canDeleteTrack: (track: Track) => boolean;
   currentTrack: Track | null;
+  downloadingIds: Set<string>;
   emptyDescription?: string;
   emptyTitle?: string;
   onDelete: (track: Track) => void;
+  onDownload: (track: Track) => void;
   onLike: (track: Track) => void;
   onPlay: (track: Track, source: Track[]) => void;
   onQueue: (track: Track) => void;
+  onRemoveDownload: (track: Track) => void;
   onRemove?: (track: Track) => void;
   playlists: Playlist[];
   source: Track[];
@@ -2850,12 +3209,15 @@ function TrackTable({
   addToPlaylist,
   canDeleteTrack,
   currentTrack,
-  emptyDescription = "Uploaded music from any user will appear in the shared catalog.",
+  downloadingIds,
+  emptyDescription = "Search JioSaavn or download songs for offline playback.",
   emptyTitle = "No songs here yet",
   onDelete,
+  onDownload,
   onLike,
   onPlay,
   onQueue,
+  onRemoveDownload,
   onRemove,
   playlists,
   source,
@@ -2909,6 +3271,14 @@ function TrackTable({
                 <>
                   <IconButton active={track.liked} label="Like" onClick={() => onLike(track)}>
                     <Heart fill={track.liked ? "currentColor" : "none"} size={17} />
+                  </IconButton>
+                  <IconButton
+                    active={track.downloaded}
+                    disabled={downloadingIds.has(track.id)}
+                    label={track.downloaded ? "Remove download" : "Download offline"}
+                    onClick={() => (track.downloaded ? onRemoveDownload(track) : onDownload(track))}
+                  >
+                    {downloadingIds.has(track.id) ? <Loader2 className="spin" size={17} /> : <Download size={17} />}
                   </IconButton>
                   <IconButton label="Queue" onClick={() => onQueue(track)}>
                     <ListMusic size={17} />

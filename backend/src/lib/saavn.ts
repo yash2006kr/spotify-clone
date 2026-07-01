@@ -3,7 +3,22 @@ import type { Playlist, Track } from "@/types";
 const saavnBaseUrl = "https://saavn.sumit.co/api";
 const saavnOwnerId = "jiosaavn";
 const saavnOwnerName = "JioSaavn";
-const defaultSearches = ["trending hindi", "arijit singh", "telugu hits", "tamil hits", "lofi hindi"];
+const trendingSearches = [
+  "trending hindi songs",
+  "top hindi songs",
+  "bollywood top 50",
+  "viral hindi songs",
+  "new hindi songs",
+  "punjabi trending songs",
+  "telugu trending songs",
+  "tamil trending songs",
+  "kannada trending songs",
+  "malayalam trending songs",
+  "india pop hits",
+  "arijit singh trending",
+  "party hits india",
+  "romantic hindi hits"
+];
 const defaultPlaylistSearches = ["hindi hits", "arijit singh", "telugu hits", "tamil hits", "bollywood"];
 
 type SaavnImage = {
@@ -205,6 +220,23 @@ async function saavnFetch<T>(path: string, params: Record<string, string | numbe
   return body.data as T;
 }
 
+function rankedTracks(tracks: Track[]) {
+  return [...tracks].sort((a, b) => {
+    if (b.plays !== a.plays) {
+      return b.plays - a.plays;
+    }
+
+    return +new Date(b.createdAt) - +new Date(a.createdAt);
+  });
+}
+
+function catalogSearches() {
+  const pivot = Math.floor(Date.now() / 3_600_000) % trendingSearches.length;
+  const rotated = [...trendingSearches.slice(pivot), ...trendingSearches.slice(0, pivot)];
+
+  return rotated.slice(0, 7);
+}
+
 export async function searchSaavnTracks(query: string, likedIds = new Set<string>(), limit = 24) {
   const data = await saavnFetch<SearchSongsData>("/search/songs", { query, limit });
   return (data.results || [])
@@ -224,13 +256,13 @@ export async function getSaavnAudioUrl(id: string) {
 }
 
 export async function getSaavnCatalog(likedIds = new Set<string>()) {
-  const groups = await Promise.allSettled(defaultSearches.map((query) => searchSaavnTracks(query, likedIds, 18)));
+  const groups = await Promise.allSettled(catalogSearches().map((query) => searchSaavnTracks(query, likedIds, 24)));
   const tracks = groups.flatMap((group) => (group.status === "fulfilled" ? group.value : []));
   const unique = new Map<string, Track>();
 
   tracks.forEach((track) => unique.set(track.id, track));
 
-  return [...unique.values()].slice(0, 90);
+  return rankedTracks([...unique.values()]).slice(0, 90);
 }
 
 export async function getSaavnPlaylists() {

@@ -797,6 +797,7 @@ body {
 .artwork,
 .playlist-cover,
 .collection-playlist-art,
+.library-download-art,
 .empty-art {
   display: grid;
   place-items: center;
@@ -817,6 +818,7 @@ body {
 
 .artwork-sm,
 .playlist-cover,
+.library-download-art,
 .empty-art {
   width: 56px;
   height: 56px;
@@ -844,8 +846,13 @@ body {
 
 .playlist-cover,
 .collection-playlist-art,
+.library-download-art,
 .empty-art {
   background: linear-gradient(135deg, #2f2f2f, #121212);
+}
+
+.library-download-art {
+  background: linear-gradient(135deg, #1ed760, #0f5132);
 }
 
 .add-cover {
@@ -1331,6 +1338,13 @@ body {
   align-items: start;
   justify-content: space-between;
   gap: 12px;
+}
+
+.now-title-actions,
+.player-track-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .now-title-line h3 {

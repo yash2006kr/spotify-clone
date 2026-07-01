@@ -32,7 +32,7 @@ function sessionHeaders(headers?: HeadersInit) {
 }
 
 export function apiUrl(path: string) {
-  if (/^https?:\/\//.test(path)) {
+  if (/^(https?|blob|data):/i.test(path)) {
     return path;
   }
 
