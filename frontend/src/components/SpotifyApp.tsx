@@ -673,8 +673,8 @@ export function SpotifyApp() {
     }
   }, []);
 
-  const enterOfflineMode = useCallback(async () => {
-    const offlineTracks = await refreshOfflineDownloads().catch(() => [] as Track[]);
+  const enterOfflineMode = useCallback(async (preloadedTracks?: Track[]) => {
+    const offlineTracks = preloadedTracks || (await refreshOfflineDownloads().catch(() => [] as Track[]));
 
     activateUser({
       ...guestUser,
@@ -766,63 +766,51 @@ export function SpotifyApp() {
   useEffect(() => {
     let active = true;
 
-    if (!navigator.onLine) {
-      const offlineTimer = window.setTimeout(() => {
-        enterOfflineMode().finally(() => {
-          if (active) {
-            setBooting(false);
-          }
-        });
-      }, 0);
+    const bootTimer = window.setTimeout(async () => {
+      const offlineTracks = await refreshOfflineDownloads().catch(() => [] as Track[]);
+      const openOffline = () => enterOfflineMode(offlineTracks);
 
-      return () => {
-        active = false;
-        window.clearTimeout(offlineTimer);
-      };
-    }
+      if (!active) {
+        return;
+      }
 
-    apiFetch("/api/auth/me", { cache: "no-store" })
-      .then(async (result) => {
+      if (!navigator.onLine) {
+        await openOffline();
         if (!active) {
           return;
         }
+        setBooting(false);
+        return;
+      }
+
+      try {
+        const result = await apiFetch("/api/auth/me", { cache: "no-store" });
 
         if (result.ok) {
           const data = await result.json();
           setOfflineMode(false);
           activateUser(data.user);
-          loadLibrary(data.user.id).catch(() => {
-            if (active) {
-              enterOfflineMode().catch(() => showToast("Could not open offline downloads."));
-            }
-          });
+          await loadLibrary(data.user.id);
         } else {
           setOfflineMode(false);
           activateUser(guestUser);
-          loadLibrary(guestUser.id).catch(() => {
-            if (active) {
-              enterOfflineMode().catch(() => showToast("Could not open offline downloads."));
-            }
-          });
+          await loadLibrary(guestUser.id);
         }
-      })
-      .catch(() => {
-        if (!active) {
-          return;
-        }
-
-        enterOfflineMode().catch(() => showToast("Could not open offline downloads."));
-      })
-      .finally(() => {
+      } catch {
+        await openOffline();
+      } finally {
         if (active) {
           setBooting(false);
         }
-      });
+      }
+    }, 0);
+
 
     return () => {
       active = false;
+      window.clearTimeout(bootTimer);
     };
-  }, [activateUser, enterOfflineMode, loadLibrary, showToast]);
+  }, [activateUser, enterOfflineMode, loadLibrary, refreshOfflineDownloads]);
 
   useEffect(() => {
     const handleOffline = () => {

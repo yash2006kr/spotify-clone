@@ -1496,18 +1496,33 @@ body {
   grid-template-columns: minmax(220px, 1fr) minmax(360px, 720px) minmax(240px, 1fr);
   gap: 18px;
   align-items: center;
-  border-top: 1px solid rgba(255, 255, 255, 0.04);
-  background: rgba(0, 0, 0, 0.78);
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.018)),
+    rgba(0, 0, 0, 0.58);
   backdrop-filter: var(--glass-blur);
   padding: 14px 22px 16px;
 }
 
 .player-track {
+  position: relative;
   display: grid;
   grid-template-columns: 56px minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
   min-width: 0;
+  overflow: hidden;
+  min-height: 66px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.055) 46%, rgba(255, 255, 255, 0.035)),
+    rgba(28, 28, 28, 0.48);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.24),
+    0 18px 48px rgba(0, 0, 0, 0.32);
+  backdrop-filter: var(--glass-blur);
+  padding: 5px 10px;
 }
 
 .mobile-action-dock {
@@ -1519,8 +1534,22 @@ body {
 }
 
 .player-center {
+  position: relative;
   display: grid;
   gap: 9px;
+  overflow: hidden;
+  min-height: 74px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.18), transparent 42%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.045)),
+    rgba(20, 20, 20, 0.46);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22),
+    0 18px 48px rgba(0, 0, 0, 0.28);
+  backdrop-filter: var(--glass-blur);
+  padding: 8px 14px 10px;
 }
 
 .transport {
@@ -1566,7 +1595,16 @@ input[type="range"]:hover {
   gap: 8px;
   align-items: center;
   justify-content: end;
+  min-height: 62px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04)),
+    rgba(20, 20, 20, 0.42);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  backdrop-filter: var(--glass-blur);
   color: var(--muted);
+  padding: 0 12px;
 }
 
 .player-tools input {
@@ -2035,7 +2073,12 @@ input[type="range"]:hover {
     gap: 10px;
     min-height: 54px;
     border-radius: 8px;
-    background: rgba(25, 25, 25, 0.58);
+    background:
+      linear-gradient(135deg, rgba(255, 255, 255, 0.17), rgba(255, 255, 255, 0.05)),
+      rgba(25, 25, 25, 0.52);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.22),
+      0 12px 34px rgba(0, 0, 0, 0.32);
     padding: 4px 8px;
   }
 
@@ -2053,8 +2096,12 @@ input[type="range"]:hover {
     order: 2;
     gap: 4px;
     border-radius: 8px;
-    background: rgba(22, 22, 22, 0.5);
-    padding: 2px 4px 4px;
+    background:
+      radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.16), transparent 44%),
+      linear-gradient(135deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04)),
+      rgba(22, 22, 22, 0.48);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+    padding: 4px 6px 6px;
   }
 
   .mobile-action-dock {
