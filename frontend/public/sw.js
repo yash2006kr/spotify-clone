@@ -1,4 +1,4 @@
-const CACHE_NAME = "spotify-shell-v5";
+const CACHE_NAME = "spotify-shell-v6";
 const SHELL_ASSETS = ["/", "/manifest.webmanifest", "/spotify-logo.jpeg"];
 
 self.addEventListener("install", (event) => {

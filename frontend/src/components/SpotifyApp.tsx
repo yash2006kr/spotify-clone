@@ -56,7 +56,7 @@ type ViewState =
   | `playlist:${string}`
   | `album:${string}`
   | `artist:${string}`;
-type LibraryFilter = "all" | "playlists" | "albums" | "artists" | "downloads";
+type LibraryFilter = "all" | "playlists" | "artists" | "downloads";
 type RepeatMode = "off" | "all" | "one";
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -479,6 +479,7 @@ export function SpotifyApp() {
   const [booting, setBooting] = useState(true);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
   const [libraryLoading, setLibraryLoading] = useState(false);
+  const [offlineMode, setOfflineMode] = useState(false);
   const [user, setUser] = useState<AppUser | null>(null);
   const [tracks, setTracks] = useState<Track[]>([]);
   const [downloadedTracks, setDownloadedTracks] = useState<Track[]>([]);
@@ -586,12 +587,12 @@ export function SpotifyApp() {
   }, [refreshOfflineDownloads, showToast]);
 
   const resetHomeView = useCallback(() => {
-    setView("home");
+    setView(offlineMode ? "downloads" : "home");
     setLastView(null);
     setSearch("");
     setSearchResults(null);
     setSearchLoading(false);
-    setLibraryFilter("all");
+    setLibraryFilter(offlineMode ? "downloads" : "all");
     setMobileLibraryOpen(false);
     setDetailsOpen(true);
     setDetailsMenuOpen(false);
@@ -601,7 +602,7 @@ export function SpotifyApp() {
     setActivityOpen(false);
     setFriendsOpen(false);
     setUploadTargetPlaylistId(null);
-  }, []);
+  }, [offlineMode]);
 
   const handleHomeButton = useCallback(() => {
     resetHomeView();
@@ -672,6 +673,34 @@ export function SpotifyApp() {
     }
   }, []);
 
+  const enterOfflineMode = useCallback(async () => {
+    const offlineTracks = await refreshOfflineDownloads().catch(() => [] as Track[]);
+
+    activateUser({
+      ...guestUser,
+      name: "Offline listener",
+      email: "Downloads available offline"
+    });
+    setOfflineMode(true);
+    setLibraryLoading(false);
+    setTracks([]);
+    setPlaylists([]);
+    setSearch("");
+    setSearchResults(null);
+    setSearchLoading(false);
+    setLibraryFilter("downloads");
+    setView("downloads");
+    setLastView(null);
+    setMobileLibraryOpen(false);
+    setMobileNowOpen(false);
+    setProfileOpen(false);
+    setQueueOpen(false);
+    setActivityOpen(false);
+    setFriendsOpen(false);
+    setPlaybackList(offlineTracks);
+    setPlaybackIndex(0);
+  }, [activateUser, refreshOfflineDownloads]);
+
   const loadNotifications = useCallback(async () => {
     setNotificationsLoading(true);
 
@@ -737,6 +766,21 @@ export function SpotifyApp() {
   useEffect(() => {
     let active = true;
 
+    if (!navigator.onLine) {
+      const offlineTimer = window.setTimeout(() => {
+        enterOfflineMode().finally(() => {
+          if (active) {
+            setBooting(false);
+          }
+        });
+      }, 0);
+
+      return () => {
+        active = false;
+        window.clearTimeout(offlineTimer);
+      };
+    }
+
     apiFetch("/api/auth/me", { cache: "no-store" })
       .then(async (result) => {
         if (!active) {
@@ -745,11 +789,21 @@ export function SpotifyApp() {
 
         if (result.ok) {
           const data = await result.json();
+          setOfflineMode(false);
           activateUser(data.user);
-          loadLibrary(data.user.id).catch(() => showToast("Could not refresh the JioSaavn catalog."));
+          loadLibrary(data.user.id).catch(() => {
+            if (active) {
+              enterOfflineMode().catch(() => showToast("Could not open offline downloads."));
+            }
+          });
         } else {
+          setOfflineMode(false);
           activateUser(guestUser);
-          loadLibrary(guestUser.id).catch(() => showToast("Could not refresh the JioSaavn catalog."));
+          loadLibrary(guestUser.id).catch(() => {
+            if (active) {
+              enterOfflineMode().catch(() => showToast("Could not open offline downloads."));
+            }
+          });
         }
       })
       .catch(() => {
@@ -757,8 +811,7 @@ export function SpotifyApp() {
           return;
         }
 
-        activateUser(guestUser);
-        loadLibrary(guestUser.id).catch(() => showToast("Could not refresh the JioSaavn catalog."));
+        enterOfflineMode().catch(() => showToast("Could not open offline downloads."));
       })
       .finally(() => {
         if (active) {
@@ -769,7 +822,24 @@ export function SpotifyApp() {
     return () => {
       active = false;
     };
-  }, [activateUser, loadLibrary, showToast]);
+  }, [activateUser, enterOfflineMode, loadLibrary, showToast]);
+
+  useEffect(() => {
+    const handleOffline = () => {
+      enterOfflineMode().then(() => showToast("Offline mode: showing downloaded songs."));
+    };
+    const handleOnline = () => {
+      showToast("Back online. Refresh the catalog when you are ready.");
+    };
+
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+
+    return () => {
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
+    };
+  }, [enterOfflineMode, showToast]);
 
   useEffect(() => {
     window.localStorage.setItem("spotify:library-width", String(libraryWidth));
@@ -892,6 +962,10 @@ export function SpotifyApp() {
       return;
     }
 
+    if (offlineMode) {
+      return;
+    }
+
     const controller = new AbortController();
     const timer = window.setTimeout(async () => {
       setSearchLoading(true);
@@ -926,7 +1000,7 @@ export function SpotifyApp() {
       controller.abort();
       window.clearTimeout(timer);
     };
-  }, [downloadedById, search, user]);
+  }, [downloadedById, offlineMode, search, user]);
 
   const selectedPlaylistId = view.startsWith("playlist:") ? view.slice("playlist:".length) : "";
   const selectedAlbumName = collectionValue(view, "album");
@@ -941,7 +1015,7 @@ export function SpotifyApp() {
   }, [playlists, selectedPlaylistId]);
 
   useEffect(() => {
-    if (!selectedPlaylistId) {
+    if (!selectedPlaylistId || offlineMode) {
       return;
     }
 
@@ -971,7 +1045,7 @@ export function SpotifyApp() {
     return () => {
       active = false;
     };
-  }, [selectedPlaylistId]);
+  }, [offlineMode, selectedPlaylistId]);
 
   const selectedPlaylistTracks = useMemo(() => {
     if (!selectedPlaylist) {
@@ -1006,18 +1080,6 @@ export function SpotifyApp() {
         : [],
     [allTracks, selectedArtistName]
   );
-  const libraryAlbums = useMemo(() => {
-    const albums = new Map<string, Track[]>();
-
-    allTracks.forEach((track) => {
-      const album = track.album || "Single";
-      albums.set(album, [...(albums.get(album) || []), track]);
-    });
-
-    return [...albums.entries()]
-      .map(([name, albumTracks]) => ({ name, tracks: albumTracks, cover: albumTracks[0] }))
-      .sort((left, right) => left.name.localeCompare(right.name));
-  }, [allTracks]);
   const libraryArtists = useMemo(() => {
     const artists = new Map<string, Track[]>();
 
@@ -1050,17 +1112,6 @@ export function SpotifyApp() {
         )
       ),
     [libraryQuery, playlists]
-  );
-  const visibleLibraryAlbums = useMemo(
-    () =>
-      libraryAlbums.filter(
-        (album) =>
-          !libraryQuery ||
-          [album.name, ...album.tracks.flatMap((track) => [track.artist, track.title])].some((value) =>
-            value.toLowerCase().includes(libraryQuery)
-          )
-      ),
-    [libraryAlbums, libraryQuery]
   );
   const visibleLibraryArtists = useMemo(
     () =>
@@ -1834,6 +1885,7 @@ export function SpotifyApp() {
       setQueueOpen(false);
       setMobileNowOpen(false);
       setMobileLibraryOpen(false);
+      setOfflineMode(false);
       setUser(null);
     }
   }
@@ -1960,7 +2012,9 @@ export function SpotifyApp() {
       : view === "songs"
         ? `${allTracks.length} songs from JioSaavn`
         : view === "downloads"
-          ? `${downloadedTracks.length} downloaded ${downloadedTracks.length === 1 ? "song" : "songs"} available offline`
+          ? offlineMode
+            ? `${downloadedTracks.length} downloaded ${downloadedTracks.length === 1 ? "song" : "songs"} ready without internet`
+            : `${downloadedTracks.length} downloaded ${downloadedTracks.length === 1 ? "song" : "songs"} available offline`
         : view === "podcasts"
           ? `${podcastTracks.length} ${podcastTracks.length === 1 ? "podcast" : "podcasts"}`
           : view === "recent"
@@ -1978,6 +2032,8 @@ export function SpotifyApp() {
     ? "Search"
     : selectedPlaylist || view === "liked"
       ? "Playlist"
+      : offlineMode
+        ? "Offline"
       : view === "downloads"
         ? "Offline"
       : selectedAlbumName
@@ -2096,11 +2152,12 @@ export function SpotifyApp() {
 
         <button
           className="upload-top-button"
+          disabled={offlineMode}
           onClick={() => loadLibrary().catch(() => showToast("Could not refresh JioSaavn catalog."))}
           type="button"
         >
           <ListMusic size={18} />
-          Refresh catalog
+          {offlineMode ? "Offline downloads" : "Refresh catalog"}
         </button>
 
         <div className="top-actions">
@@ -2193,7 +2250,11 @@ export function SpotifyApp() {
               <span>Your Library</span>
             </div>
             <div className="panel-actions">
-              <IconButton label="Refresh catalog" onClick={() => loadLibrary().catch(() => showToast("Could not refresh JioSaavn catalog."))}>
+              <IconButton
+                disabled={offlineMode}
+                label={offlineMode ? "Offline downloads only" : "Refresh catalog"}
+                onClick={() => loadLibrary().catch(() => showToast("Could not refresh JioSaavn catalog."))}
+              >
                 <ListMusic size={22} />
               </IconButton>
               <IconButton
@@ -2212,13 +2273,6 @@ export function SpotifyApp() {
               onClick={() => setLibraryFilter((filter) => (filter === "playlists" ? "all" : "playlists"))}
             >
               Playlists
-            </button>
-            <button
-              className={libraryFilter === "albums" ? "active" : ""}
-              type="button"
-              onClick={() => setLibraryFilter((filter) => (filter === "albums" ? "all" : "albums"))}
-            >
-              Albums
             </button>
             <button
               className={libraryFilter === "artists" ? "active" : ""}
@@ -2329,22 +2383,6 @@ export function SpotifyApp() {
                     <small>
                       JioSaavn playlist · {playlist.trackIds.length || "many"} songs
                     </small>
-                  </span>
-                </button>
-              ))}
-
-            {libraryFilter === "albums" &&
-              visibleLibraryAlbums.map((album) => (
-                <button
-                  className={`library-item ${selectedAlbumName === album.name ? "selected" : ""}`}
-                  key={album.name}
-                  onClick={() => selectView(collectionView("album", album.name))}
-                  type="button"
-                >
-                  <Artwork track={album.cover} size="sm" />
-                  <span>
-                    <strong>{album.name}</strong>
-                    <small>Album · {album.tracks.length} songs</small>
                   </span>
                 </button>
               ))}
