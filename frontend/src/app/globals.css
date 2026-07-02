@@ -351,7 +351,7 @@ body {
 
 .spotify-shell {
   display: grid;
-  grid-template-rows: 74px 1fr 98px;
+  grid-template-rows: 74px 1fr;
   height: 100vh;
   min-width: 320px;
   background:
@@ -751,7 +751,7 @@ body {
   gap: 4px;
   min-height: 0;
   overflow: auto;
-  padding: 8px;
+  padding: 8px 8px 128px;
 }
 
 .library-empty {
@@ -877,7 +877,7 @@ body {
 .main-panel {
   overflow-x: hidden;
   overflow-y: auto;
-  padding-bottom: 36px;
+  padding-bottom: 132px;
 }
 
 .hero-band {
@@ -1298,7 +1298,7 @@ body {
 .now-panel {
   gap: 14px;
   overflow: auto;
-  padding: 0 22px 18px;
+  padding: 0 22px 132px;
 }
 
 .now-header {
@@ -1492,14 +1492,17 @@ body {
 }
 
 .player-bar {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 20;
   display: grid;
   grid-template-columns: minmax(220px, 1fr) minmax(360px, 720px) minmax(240px, 1fr);
   gap: 18px;
   align-items: center;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.018)),
-    rgba(0, 0, 0, 0.58);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
   backdrop-filter: var(--glass-blur);
   padding: 14px 22px 16px;
 }
@@ -2059,10 +2062,8 @@ input[type="range"]:hover {
     grid-template-columns: 1fr;
     gap: 7px;
     max-height: 42dvh;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
-    background:
-      linear-gradient(180deg, rgba(18, 18, 18, 0.62), rgba(0, 0, 0, 0.88)),
-      rgba(0, 0, 0, 0.76);
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    background: transparent;
     backdrop-filter: var(--glass-blur);
     padding: 7px 12px calc(7px + env(safe-area-inset-bottom, 0px));
   }
