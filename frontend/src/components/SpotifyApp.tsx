@@ -29,6 +29,7 @@ import {
   Music2,
   Pause,
   Play,
+  Plus,
   Repeat,
   Repeat1,
   Search,
@@ -86,7 +87,7 @@ const gradients = [
 ];
 const accentColors = ["#477875", "#714f86", "#806f42", "#426d8c", "#7a5a4a", "#416d55", "#6b4f7d", "#5d6b42"];
 const loadingMessages = [
-  "Tuning the JioSaavn catalog before the first track lands.",
+  "Tuning the catalog before the first track lands.",
   "Fetching album covers and lining up the queue.",
   "Finding songs, playlists, artists, and albums.",
   "Warming up streams, likes, and the good stuff.",
@@ -172,6 +173,46 @@ function uniqueTracks(tracks: Track[]) {
     seen.add(track.id);
     return true;
   });
+}
+
+function keywordTokens(value: string) {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((token) => token.length > 2);
+}
+
+function smartMoodQueue(seed: Track, pool: Track[]) {
+  const seedArtists = new Set(splitArtistNames(seed.artist).map((artist) => artist.toLowerCase()));
+  const seedTokens = new Set(keywordTokens(`${seed.title} ${seed.album} ${seed.genre}`));
+  const seedDuration = seed.duration || 0;
+  const candidates = uniqueTracks(pool).filter((track) => track.id !== seed.id && !isMissingTrack(track));
+
+  return [
+    seed,
+    ...candidates
+      .map((track) => {
+        const artistScore = splitArtistNames(track.artist).some((artist) => seedArtists.has(artist.toLowerCase()))
+          ? 36
+          : 0;
+        const genreScore = track.genre && track.genre === seed.genre ? 28 : 0;
+        const albumScore = track.album && track.album === seed.album ? 16 : 0;
+        const tokenScore = keywordTokens(`${track.title} ${track.album} ${track.genre}`).reduce(
+          (score, token) => score + (seedTokens.has(token) ? 5 : 0),
+          0
+        );
+        const durationScore =
+          seedDuration && track.duration ? Math.max(0, 14 - Math.abs(seedDuration - track.duration) / 18) : 0;
+        const popularityScore = Math.min(12, Math.log10(Math.max(1, track.plays || 1)));
+
+        return {
+          score: artistScore + genreScore + albumScore + tokenScore + durationScore + popularityScore,
+          track
+        };
+      })
+      .sort((left, right) => right.score - left.score)
+      .map((item) => item.track)
+  ];
 }
 
 function isPodcastTrack(track: Track) {
@@ -283,6 +324,29 @@ function loadIdList(key: string) {
 function saveIdList(key: string, ids: string[]) {
   if (typeof window !== "undefined") {
     window.localStorage.setItem(key, JSON.stringify(ids));
+  }
+}
+
+function userPlaylistKey(userId: string) {
+  return `spotify:user-playlists:${userId}`;
+}
+
+function loadUserPlaylists(userId: string) {
+  if (typeof window === "undefined") {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(userPlaylistKey(userId)) || "[]") as Playlist[];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveUserPlaylists(userId: string, playlists: Playlist[]) {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(userPlaylistKey(userId), JSON.stringify(playlists));
   }
 }
 
@@ -485,6 +549,10 @@ export function SpotifyApp() {
   const [downloadedTracks, setDownloadedTracks] = useState<Track[]>([]);
   const [downloadingIds, setDownloadingIds] = useState<Set<string>>(() => new Set());
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
+  const [userPlaylists, setUserPlaylists] = useState<Playlist[]>([]);
+  const [playlistModalOpen, setPlaylistModalOpen] = useState(false);
+  const [newPlaylistName, setNewPlaylistName] = useState("");
+  const [newPlaylistDescription, setNewPlaylistDescription] = useState("");
   const [view, setView] = useState<ViewState>("home");
   const [lastView, setLastView] = useState<ViewState | null>(null);
   const [libraryFilter, setLibraryFilter] = useState<LibraryFilter>("all");
@@ -571,6 +639,7 @@ export function SpotifyApp() {
     setFollowedArtists(loadFollowedArtists(nextUser.id));
     setRecentPlayedIds(loadIdList(`spotify:recent-tracks:${nextUser.id}`).slice(0, 12));
     setRecentPlaylistIds(loadIdList(`spotify:recent-playlists:${nextUser.id}`).slice(0, 8));
+    setUserPlaylists(loadUserPlaylists(nextUser.id));
     setUser(nextUser);
   }, []);
 
@@ -606,13 +675,6 @@ export function SpotifyApp() {
 
   const handleHomeButton = useCallback(() => {
     resetHomeView();
-    setCurrentTrack(null);
-    setPlaybackList([]);
-    setPlaybackIndex(0);
-    setManualQueue([]);
-    setIsPlaying(false);
-    setCurrentTime(0);
-    setLoadedDuration(0);
   }, [resetHomeView]);
 
   const openMobileLibrary = useCallback(() => {
@@ -700,6 +762,34 @@ export function SpotifyApp() {
     setPlaybackList(offlineTracks);
     setPlaybackIndex(0);
   }, [activateUser, refreshOfflineDownloads]);
+
+  const reconnectOnlineMode = useCallback(async () => {
+    const result = await apiFetch("/api/auth/me", { cache: "no-store" });
+
+    if (result.ok) {
+      const data = await result.json();
+      setOfflineMode(false);
+      activateUser(data.user);
+      await loadLibrary(data.user.id);
+      setView("home");
+      setLibraryFilter("all");
+      setSearch("");
+      setSearchResults(null);
+      setSearchLoading(false);
+      showToast(`Welcome back, ${data.user.name}.`);
+      return;
+    }
+
+    setOfflineMode(false);
+    activateUser(guestUser);
+    await loadLibrary(guestUser.id);
+    setView("home");
+    setLibraryFilter("all");
+    setSearch("");
+    setSearchResults(null);
+    setSearchLoading(false);
+    showToast("Back online.");
+  }, [activateUser, loadLibrary, showToast]);
 
   const loadNotifications = useCallback(async () => {
     setNotificationsLoading(true);
@@ -817,7 +907,7 @@ export function SpotifyApp() {
       enterOfflineMode().then(() => showToast("Offline mode: showing downloaded songs."));
     };
     const handleOnline = () => {
-      showToast("Back online. Refresh the catalog when you are ready.");
+      reconnectOnlineMode().catch(() => showToast("Back online. Refresh the catalog when you are ready."));
     };
 
     window.addEventListener("offline", handleOffline);
@@ -827,11 +917,17 @@ export function SpotifyApp() {
       window.removeEventListener("offline", handleOffline);
       window.removeEventListener("online", handleOnline);
     };
-  }, [enterOfflineMode, showToast]);
+  }, [enterOfflineMode, reconnectOnlineMode, showToast]);
 
   useEffect(() => {
     window.localStorage.setItem("spotify:library-width", String(libraryWidth));
   }, [libraryWidth]);
+
+  useEffect(() => {
+    if (user) {
+      saveUserPlaylists(user.id, userPlaylists);
+    }
+  }, [user, userPlaylists]);
 
   useEffect(() => {
     window.localStorage.setItem("spotify:now-width", String(nowPanelWidth));
@@ -999,11 +1095,15 @@ export function SpotifyApp() {
       return null;
     }
 
-    return playlists.find((playlist) => playlist.id === selectedPlaylistId) || null;
-  }, [playlists, selectedPlaylistId]);
+    return (
+      userPlaylists.find((playlist) => playlist.id === selectedPlaylistId) ||
+      playlists.find((playlist) => playlist.id === selectedPlaylistId) ||
+      null
+    );
+  }, [playlists, selectedPlaylistId, userPlaylists]);
 
   useEffect(() => {
-    if (!selectedPlaylistId || offlineMode) {
+    if (!selectedPlaylistId || offlineMode || selectedPlaylistId.startsWith("custom:")) {
       return;
     }
 
@@ -1088,8 +1188,8 @@ export function SpotifyApp() {
       }))
       .sort((left, right) => left.name.localeCompare(right.name));
   }, [allTracks, artistCovers]);
-  const ownPlaylists = useMemo(() => [] as Playlist[], []);
-  const selectedPlaylistOwned = false;
+  const ownPlaylists = userPlaylists;
+  const selectedPlaylistOwned = Boolean(selectedPlaylist && userPlaylists.some((playlist) => playlist.id === selectedPlaylist.id));
   const libraryQuery = librarySearch.trim().toLowerCase();
   const visiblePlaylists = useMemo(
     () =>
@@ -1282,6 +1382,12 @@ export function SpotifyApp() {
         tracks: playlist.tracks?.map((track) => (track.id === trackId ? update(track) : track))
       }))
     );
+    setUserPlaylists((existing) =>
+      existing.map((playlist) => ({
+        ...playlist,
+        tracks: playlist.tracks?.map((track) => (track.id === trackId ? update(track) : track))
+      }))
+    );
     setPlaybackList((existing) => existing.map((track) => (track.id === trackId ? update(track) : track)));
     setManualQueue((existing) => existing.map((track) => (track.id === trackId ? update(track) : track)));
     setCurrentTrack((track) => (track?.id === trackId ? update(track) : track));
@@ -1292,6 +1398,12 @@ export function SpotifyApp() {
 
     setTracks((existing) => existing.map((track) => updatedById.get(track.id) || track));
     setPlaylists((existing) =>
+      existing.map((playlist) => ({
+        ...playlist,
+        tracks: playlist.tracks?.map((track) => updatedById.get(track.id) || track)
+      }))
+    );
+    setUserPlaylists((existing) =>
       existing.map((playlist) => ({
         ...playlist,
         tracks: playlist.tracks?.map((track) => updatedById.get(track.id) || track)
@@ -1308,7 +1420,16 @@ export function SpotifyApp() {
       return;
     }
 
-    const list = source.length ? source : [track];
+    const fromSearchResults =
+      Boolean(search.trim()) &&
+      source.length > 1 &&
+      source.some((item) => item.id === track.id) &&
+      source.every((item) => searchTracks.some((searchTrack) => searchTrack.id === item.id));
+    const list = fromSearchResults
+      ? smartMoodQueue(track, uniqueTracks([...source, ...allTracks, ...catalogTracks]))
+      : source.length
+        ? source
+        : [track];
     const index = Math.max(0, list.findIndex((item) => item.id === track.id));
 
     if (user) {
@@ -1325,7 +1446,7 @@ export function SpotifyApp() {
     setLoadedDuration(track.duration || 0);
     setCurrentTime(0);
     setIsPlaying(true);
-  }, [activeTracks, showToast, user]);
+  }, [activeTracks, allTracks, catalogTracks, search, searchTracks, showToast, user]);
 
   const playShuffled = useCallback(
     (source: Track[] = activeTracks) => {
@@ -1654,6 +1775,13 @@ export function SpotifyApp() {
           tracks: playlist.tracks?.filter((item) => item.id !== track.id)
         }))
       );
+      setUserPlaylists((existing) =>
+        existing.map((playlist) => ({
+          ...playlist,
+          trackIds: playlist.trackIds.filter((id) => id !== track.id),
+          tracks: playlist.tracks?.filter((item) => item.id !== track.id)
+        }))
+      );
       setRecentPlayedIds((existing) => {
         const next = existing.filter((id) => id !== track.id);
 
@@ -1692,70 +1820,97 @@ export function SpotifyApp() {
     [showToast]
   );
 
+  const createUserPlaylist = useCallback(
+    (track?: Track) => {
+      const name = newPlaylistName.trim();
+
+      if (!name) {
+        showToast("Name your playlist first.");
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const id = `custom:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 8)}`;
+      const initialTracks = track && !isMissingTrack(track) ? [track] : [];
+      const playlist: Playlist = {
+        id,
+        name,
+        description: newPlaylistDescription.trim() || "Custom playlist",
+        coverUrl: track?.coverUrl || null,
+        coverColor: track ? accentFor(track.id) : "#1ed760",
+        isPublic: false,
+        ownerId: user?.id || guestUser.id,
+        ownerName: user?.name || "You",
+        trackIds: initialTracks.map((item) => item.id),
+        createdAt: now,
+        updatedAt: now,
+        tracks: initialTracks
+      };
+
+      setUserPlaylists((existing) => [playlist, ...existing]);
+      setNewPlaylistName("");
+      setNewPlaylistDescription("");
+      showToast(track ? `Created "${name}" and added "${track.title}".` : `Created "${name}".`);
+    },
+    [newPlaylistDescription, newPlaylistName, showToast, user]
+  );
+
   const addToPlaylist = useCallback(
-    async (playlistId: string, track: Track) => {
+    (playlistId: string, track: Track) => {
       if (!playlistId || isMissingTrack(track)) {
         return;
       }
 
-      const result = await apiFetch(`/api/playlists/${playlistId}/tracks`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trackId: track.id })
-      });
+      const playlist = userPlaylists.find((item) => item.id === playlistId);
 
-      if (!result.ok) {
-        showToast("Could not add to playlist.");
+      if (!playlist) {
+        showToast("Choose one of your custom playlists.");
         return;
       }
 
-      setPlaylists((existing) =>
+      if (playlist.trackIds.includes(track.id)) {
+        showToast(`"${track.title}" is already in ${playlist.name}.`);
+        return;
+      }
+
+      setUserPlaylists((existing) =>
         existing.map((playlist) =>
-          playlist.id === playlistId && !playlist.trackIds.includes(track.id)
+          playlist.id === playlistId
             ? {
                 ...playlist,
                 trackIds: [...playlist.trackIds, track.id],
-                tracks: playlist.tracks ? uniqueTracks([...playlist.tracks, track]) : playlist.tracks
+                tracks: uniqueTracks([...(playlist.tracks || []), track]),
+                updatedAt: new Date().toISOString()
               }
             : playlist
         )
       );
-      showToast(`Added to ${playlists.find((playlist) => playlist.id === playlistId)?.name || "playlist"}.`);
+      showToast(`Added to ${playlist.name}.`);
     },
-    [playlists, showToast]
+    [showToast, userPlaylists]
   );
 
   const removeFromPlaylist = useCallback(
-    async (track: Track) => {
-      if (!selectedPlaylist) {
+    (track: Track) => {
+      if (!selectedPlaylist || !selectedPlaylistOwned) {
         return;
       }
 
-      const result = await apiFetch(`/api/playlists/${selectedPlaylist.id}/tracks`, {
-        method: "DELETE",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trackId: track.id })
-      });
-
-      if (!result.ok) {
-        showToast("Could not remove from playlist.");
-        return;
-      }
-
-      setPlaylists((existing) =>
+      setUserPlaylists((existing) =>
         existing.map((playlist) =>
           playlist.id === selectedPlaylist.id
             ? {
                 ...playlist,
                 trackIds: playlist.trackIds.filter((id) => id !== track.id),
-                tracks: playlist.tracks?.filter((item) => item.id !== track.id)
+                tracks: playlist.tracks?.filter((item) => item.id !== track.id),
+                updatedAt: new Date().toISOString()
               }
             : playlist
         )
       );
       showToast(`Removed "${track.title}" from ${selectedPlaylist.name}.`);
     },
-    [selectedPlaylist, showToast]
+    [selectedPlaylist, selectedPlaylistOwned, showToast]
   );
 
   const canDeleteTrack = useCallback(() => false, []);
@@ -1964,7 +2119,7 @@ export function SpotifyApp() {
       <AuthScreen
         onAuthenticated={(nextUser) => {
           activateUser(nextUser);
-          loadLibrary(nextUser.id).catch(() => showToast("Could not refresh the JioSaavn catalog."));
+          loadLibrary(nextUser.id).catch(() => showToast("Could not refresh the music catalog."));
         }}
       />
     );
@@ -1998,7 +2153,7 @@ export function SpotifyApp() {
     : view === "liked"
       ? `${likedTracks.length} liked ${likedTracks.length === 1 ? "song" : "songs"}`
       : view === "songs"
-        ? `${allTracks.length} songs from JioSaavn`
+        ? `${allTracks.length} songs from the catalog`
         : view === "downloads"
           ? offlineMode
             ? `${downloadedTracks.length} downloaded ${downloadedTracks.length === 1 ? "song" : "songs"} ready without internet`
@@ -2015,7 +2170,7 @@ export function SpotifyApp() {
                   ? `${selectedAlbumTracks.length} ${selectedAlbumTracks.length === 1 ? "song" : "songs"} from this album`
                   : selectedArtistName
                     ? `${selectedArtistTracks.length} ${selectedArtistTracks.length === 1 ? "song" : "songs"} by this artist`
-                : `${tracks.length} songs streaming from JioSaavn`;
+                : `${tracks.length} songs streaming from the catalog`;
   const activeKicker = search
     ? "Search"
     : selectedPlaylist || view === "liked"
@@ -2141,7 +2296,7 @@ export function SpotifyApp() {
         <button
           className="upload-top-button"
           disabled={offlineMode}
-          onClick={() => loadLibrary().catch(() => showToast("Could not refresh JioSaavn catalog."))}
+          onClick={() => loadLibrary().catch(() => showToast("Could not refresh music catalog."))}
           type="button"
         >
           <ListMusic size={18} />
@@ -2206,7 +2361,7 @@ export function SpotifyApp() {
                   <small>Songs</small>
                 </span>
                 <span>
-                  <strong>{playlists.length}</strong>
+                  <strong>{playlists.length + userPlaylists.length}</strong>
                   <small>Playlists</small>
                 </span>
                 <span>
@@ -2241,7 +2396,7 @@ export function SpotifyApp() {
               <IconButton
                 disabled={offlineMode}
                 label={offlineMode ? "Offline downloads only" : "Refresh catalog"}
-                onClick={() => loadLibrary().catch(() => showToast("Could not refresh JioSaavn catalog."))}
+                onClick={() => loadLibrary().catch(() => showToast("Could not refresh music catalog."))}
               >
                 <ListMusic size={22} />
               </IconButton>
@@ -2307,6 +2462,22 @@ export function SpotifyApp() {
               </button>
             )}
 
+            {libraryFilter === "all" &&
+              userPlaylists.map((playlist) => (
+                <button
+                  className={`library-item ${view === `playlist:${playlist.id}` ? "selected" : ""}`}
+                  key={`custom-${playlist.id}`}
+                  onClick={() => selectView(`playlist:${playlist.id}`)}
+                  type="button"
+                >
+                  <PlaylistArtwork playlist={playlist} />
+                  <span>
+                    <strong>{playlist.name}</strong>
+                    <small>Custom playlist · {playlist.trackIds.length} songs</small>
+                  </span>
+                </button>
+              ))}
+
             {(libraryFilter === "all" || libraryFilter === "downloads") && (
               <button
                 className={`library-item ${view === "downloads" ? "selected" : ""}`}
@@ -2351,7 +2522,7 @@ export function SpotifyApp() {
                   <span>
                     <strong>{playlist.name}</strong>
                     <small>
-                      Recent JioSaavn playlist · {playlist.trackIds.length || "many"} songs
+                      Recent Featured playlist · {playlist.trackIds.length || "many"} songs
                     </small>
                   </span>
                 </button>
@@ -2369,7 +2540,7 @@ export function SpotifyApp() {
                   <span>
                     <strong>{playlist.name}</strong>
                     <small>
-                      JioSaavn playlist · {playlist.trackIds.length || "many"} songs
+                      Featured playlist · {playlist.trackIds.length || "many"} songs
                     </small>
                   </span>
                 </button>
@@ -2515,7 +2686,7 @@ export function SpotifyApp() {
             <div className="empty-now">
               <Disc3 size={56} />
               <h3>Pick a song</h3>
-              <p>JioSaavn songs, albums, and playlists will appear here while playing.</p>
+              <p>Catalog songs, albums, and playlists will appear here while playing.</p>
             </div>
           )}
         </section>
@@ -2564,7 +2735,7 @@ export function SpotifyApp() {
                 {playlists[0] && (
                   <button className="quick-tile upload-quick-tile" onClick={() => selectView(`playlist:${playlists[0].id}`)} type="button">
                     <PlaylistArtwork playlist={playlists[0]} />
-                    <span>JioSaavn Playlists</span>
+                    <span>Featured Playlists</span>
                   </button>
                 )}
 
@@ -2710,8 +2881,8 @@ export function SpotifyApp() {
                   search
                     ? "Try a different title, artist, album, or genre."
                     : view === "podcasts"
-                      ? "Podcasts from JioSaavn will appear here when available."
-                      : "Search JioSaavn to find more songs, albums, artists, and playlists."
+                      ? "Podcasts from the catalog will appear here when available."
+                      : "Search the catalog to find more songs, albums, artists, and playlists."
                 }
                 emptyTitle={searchLoading ? "Searching..." : search ? "No songs found" : undefined}
                 onDelete={deleteTrack}
@@ -2830,7 +3001,7 @@ export function SpotifyApp() {
               <div className="empty-now">
                 <Disc3 size={56} />
                 <h3>Pick a song</h3>
-                <p>JioSaavn songs, albums, and playlists will appear here while playing.</p>
+                <p>Catalog songs, albums, and playlists will appear here while playing.</p>
               </div>
             )}
 
@@ -3017,6 +3188,9 @@ export function SpotifyApp() {
             <IconButton active={queueOpen || nextQueueTracks.length > 0} label="Queue" onClick={() => setQueueOpen(true)}>
               <ListMusic size={20} />
             </IconButton>
+            <IconButton label="Custom playlists" onClick={() => setPlaylistModalOpen(true)}>
+              <Plus size={20} />
+            </IconButton>
           </div>
 
           <div className="progress-line">
@@ -3050,6 +3224,9 @@ export function SpotifyApp() {
           <IconButton active={queueOpen || nextQueueTracks.length > 0} label="Queue" onClick={() => setQueueOpen(true)}>
             <ListMusic size={20} />
           </IconButton>
+          <IconButton label="Custom playlists" onClick={() => setPlaylistModalOpen(true)}>
+            <Plus size={19} />
+          </IconButton>
           <IconButton label="Lyrics" onClick={() => showToast("Lyrics view is coming next.")}>
             <Mic2 size={19} />
           </IconButton>
@@ -3065,6 +3242,75 @@ export function SpotifyApp() {
           />
         </div>
       </footer>
+
+      {playlistModalOpen && (
+        <Modal title="Custom Playlists" onClose={() => setPlaylistModalOpen(false)}>
+          <div className="playlist-manager">
+            <form
+              className="playlist-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                createUserPlaylist(currentTrack || undefined);
+              }}
+            >
+              <label>
+                Playlist name
+                <input
+                  onChange={(event) => setNewPlaylistName(event.target.value)}
+                  placeholder="Late night drive"
+                  value={newPlaylistName}
+                />
+              </label>
+              <label>
+                Description
+                <textarea
+                  onChange={(event) => setNewPlaylistDescription(event.target.value)}
+                  placeholder="A custom mix for this mood"
+                  value={newPlaylistDescription}
+                />
+              </label>
+              <button className="primary-auth-button" type="submit">
+                <Plus size={18} />
+                {currentTrack ? "Create and add current song" : "Create playlist"}
+              </button>
+            </form>
+
+            <section className="custom-playlist-list">
+              <div className="credits-title">
+                <h3>Your playlists</h3>
+                <span>{userPlaylists.length}</span>
+              </div>
+              {userPlaylists.length ? (
+                userPlaylists.map((playlist) => (
+                  <article className="custom-playlist-item" key={playlist.id}>
+                    <button
+                      className="queue-item"
+                      onClick={() => {
+                        selectView(`playlist:${playlist.id}`);
+                        setPlaylistModalOpen(false);
+                      }}
+                      type="button"
+                    >
+                      <PlaylistArtwork playlist={playlist} />
+                      <span>
+                        <strong>{playlist.name}</strong>
+                        <small>{playlist.trackIds.length} songs · {playlist.description || "Custom playlist"}</small>
+                      </span>
+                    </button>
+                    {currentTrack && !playlist.trackIds.includes(currentTrack.id) && (
+                      <IconButton label="Add current song" onClick={() => addToPlaylist(playlist.id, currentTrack)}>
+                        <Plus size={17} />
+                      </IconButton>
+                    )}
+                  </article>
+                ))
+              ) : (
+                <p className="queue-empty">Create a playlist to collect your favorite songs.</p>
+              )}
+            </section>
+          </div>
+        </Modal>
+      )}
 
       {queueOpen && (
         <Modal title="Queue" onClose={() => setQueueOpen(false)}>
@@ -3161,7 +3407,7 @@ function Shelf({
         </div>
         <div className="empty-shelf">
           <Music size={34} />
-          <span>Search JioSaavn to fill this shelf.</span>
+          <span>Search the catalog to fill this shelf.</span>
         </div>
       </section>
     );
@@ -3236,7 +3482,7 @@ function TrackTable({
   canDeleteTrack,
   currentTrack,
   downloadingIds,
-  emptyDescription = "Search JioSaavn or download songs for offline playback.",
+  emptyDescription = "Search the catalog or download songs for offline playback.",
   emptyTitle = "No songs here yet",
   onDelete,
   onDownload,

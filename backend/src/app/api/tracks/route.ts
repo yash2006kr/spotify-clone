@@ -28,13 +28,13 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ tracks });
   } catch (error) {
     console.error(error);
-    return NextResponse.json({ error: "Unable to load songs from JioSaavn." }, { status: 500 });
+    return NextResponse.json({ error: "Unable to load songs from the catalog." }, { status: 500 });
   }
 }
 
 export async function POST() {
   return NextResponse.json(
-    { error: "MP3 uploads were removed. Search JioSaavn and play songs directly from the catalog." },
+    { error: "MP3 uploads were removed. Search the catalog and play songs directly from the catalog." },
     { status: 410 }
   );
 }

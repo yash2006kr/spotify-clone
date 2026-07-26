@@ -2,7 +2,7 @@ import type { Playlist, Track } from "@/types";
 
 const saavnBaseUrl = "https://saavn.sumit.co/api";
 const saavnOwnerId = "jiosaavn";
-const saavnOwnerName = "JioSaavn";
+const saavnOwnerName = "Music Catalog";
 const trendingSearches = [
   "trending hindi songs",
   "top hindi songs",
@@ -154,7 +154,7 @@ export function saavnSongToTrack(song: SaavnSong, liked = false): Track | null {
     title,
     artist: artistNames(song),
     album: albumName,
-    genre: stringValue(song.language, "JioSaavn"),
+    genre: stringValue(song.language, "Music Catalog"),
     duration: numberValue(song.duration),
     plays: numberValue(song.playCount),
     liked,
@@ -179,8 +179,8 @@ export function saavnPlaylistToClient(playlist: SaavnPlaylist, tracks?: Track[])
 
   return {
     id,
-    name: stringValue(playlist.name || playlist.title, "JioSaavn Playlist"),
-    description: stringValue(playlist.description, stringValue(playlist.language, "JioSaavn playlist")),
+    name: stringValue(playlist.name || playlist.title, "Featured Playlist"),
+    description: stringValue(playlist.description, stringValue(playlist.language, "Featured playlist")),
     coverUrl: bestMediaUrl(playlist.image),
     coverColor: "#1ed760",
     isPublic: true,
@@ -208,13 +208,13 @@ async function saavnFetch<T>(path: string, params: Record<string, string | numbe
   });
 
   if (!result.ok) {
-    throw new Error(`JioSaavn API returned ${result.status}`);
+    throw new Error(`Music Catalog API returned ${result.status}`);
   }
 
   const body = (await result.json()) as SaavnEnvelope<T>;
 
   if (body.success === false) {
-    throw new Error(body.message || "JioSaavn API request failed.");
+    throw new Error(body.message || "Music Catalog API request failed.");
   }
 
   return body.data as T;

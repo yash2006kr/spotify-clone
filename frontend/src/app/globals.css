@@ -1731,6 +1731,23 @@ input[type="range"]:hover {
   resize: vertical;
 }
 
+.playlist-manager {
+  display: grid;
+  gap: 22px;
+}
+
+.custom-playlist-list {
+  display: grid;
+  gap: 8px;
+}
+
+.custom-playlist-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px;
+  gap: 8px;
+  align-items: center;
+}
+
 .visibility-options {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -1919,7 +1936,7 @@ input[type="range"]:hover {
   }
 
   .search-box input {
-    font-size: 0.86rem;
+    font-size: 16px;
   }
 
   .upload-top-button {

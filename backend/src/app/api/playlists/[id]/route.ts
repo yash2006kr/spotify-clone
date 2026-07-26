@@ -35,20 +35,20 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.json({ playlist });
   } catch (error) {
     console.error(error);
-    return NextResponse.json({ error: "Unable to load this JioSaavn playlist." }, { status: 500 });
+    return NextResponse.json({ error: "Unable to load this Featured playlist." }, { status: 500 });
   }
 }
 
 export async function PATCH() {
   return NextResponse.json(
-    { error: "JioSaavn playlists cannot be edited from this app." },
+    { error: "Featured playlists cannot be edited from this app." },
     { status: 405 }
   );
 }
 
 export async function DELETE() {
   return NextResponse.json(
-    { error: "JioSaavn playlists cannot be deleted from this app." },
+    { error: "Featured playlists cannot be deleted from this app." },
     { status: 405 }
   );
 }

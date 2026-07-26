@@ -22,7 +22,7 @@ export async function GET(_request: Request, context: RouteContext) {
     });
 
     if (!audioResponse.ok || !audioResponse.body) {
-      return NextResponse.json({ error: "Unable to download this JioSaavn song." }, { status: 502 });
+      return NextResponse.json({ error: "Unable to download this catalog song." }, { status: 502 });
     }
 
     const headers = new Headers({

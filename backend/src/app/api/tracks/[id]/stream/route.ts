@@ -20,6 +20,6 @@ export async function GET(_request: Request, context: RouteContext) {
     return NextResponse.redirect(audioUrl);
   } catch (error) {
     console.error(error);
-    return NextResponse.json({ error: "Unable to stream this JioSaavn song." }, { status: 500 });
+    return NextResponse.json({ error: "Unable to stream this catalog song." }, { status: 500 });
   }
 }

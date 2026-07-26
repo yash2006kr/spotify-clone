@@ -4,7 +4,7 @@ export const runtime = "nodejs";
 
 export async function DELETE() {
   return NextResponse.json(
-    { error: "JioSaavn catalog songs cannot be deleted from this app." },
+    { error: "music catalog songs cannot be deleted from this app." },
     { status: 405 }
   );
 }

@@ -11,13 +11,13 @@ export async function GET() {
     return NextResponse.json({ playlists });
   } catch (error) {
     console.error(error);
-    return NextResponse.json({ error: "Unable to load JioSaavn playlists." }, { status: 500 });
+    return NextResponse.json({ error: "Unable to load Featured playlists." }, { status: 500 });
   }
 }
 
 export async function POST() {
   return NextResponse.json(
-    { error: "Local playlist creation was removed. Browse JioSaavn playlists from the catalog." },
+    { error: "Local playlist creation was removed. Browse Featured playlists from the catalog." },
     { status: 410 }
   );
 }
